@@ -32,7 +32,9 @@ from pathlib import Path
 # ── Ensure app package is on path ─────────────────────────────────────────────
 ROOT = Path(__file__).parent.parent
 # Look specifically inside the backend folder for the 'app' module
-sys.path.insert(0, str(ROOT / "backend"))
+BACKEND_PATH = ROOT / "backend"
+if str(BACKEND_PATH) not in sys.path:
+    sys.path.insert(0, str(BACKEND_PATH))
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
