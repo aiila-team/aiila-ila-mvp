@@ -3,12 +3,37 @@ import os
 from pathlib import Path
 from neo4j import GraphDatabase
 
-# Neo4j connection details (Matching your .env.example)
-NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password123")
-
 MOCK_DATA_PATH = Path(__file__).parent / "mock_data.json"
+
+
+def load_env_file(env_path: Path) -> None:
+    """Load simple KEY=VALUE pairs from a .env file if present."""
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+ROOT = Path(__file__).parent.parent
+load_env_file(ROOT / ".env")
+load_env_file(ROOT.parent / ".env")
+
+# Neo4j connection details (from environment variables)
+NEO4J_URI = os.getenv("NEO4J_URI")
+NEO4J_USER = os.getenv("NEO4J_USER")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
+
+if not all([NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD]):
+    raise ValueError(
+        "NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD environment variables must be set. "
+        "Please configure these before running this script."
+    )
 
 def clear_graph(session):
     print("Clearing existing Neo4j graph...")

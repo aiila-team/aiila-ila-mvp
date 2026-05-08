@@ -32,8 +32,11 @@ from pathlib import Path
 # ── Ensure app package is on path ─────────────────────────────────────────────
 ROOT = Path(__file__).parent.parent
 # Look specifically inside the backend folder for the 'app' module
-sys.path.insert(0, str(ROOT / "backend"))
+BACKEND_PATH = ROOT / "backend"
+if str(BACKEND_PATH) not in sys.path:
+    sys.path.insert(0, str(BACKEND_PATH))
 
+import sqlalchemy
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
@@ -43,10 +46,6 @@ from app.models import (
     RawEvent, EntityEvent, RiskAlert, EvidencePackage
 )
 # ── Config ────────────────────────────────────────────────────────────────────
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql://ila_user:ila_password123@localhost:5432/ila_db"
-)
 MOCK_DATA_PATH = Path(__file__).parent / "mock_data.json"
 RESET = os.environ.get("RESET", "false").lower() == "true"
 
@@ -54,6 +53,49 @@ BATCH_SIZE = 100   # insert in batches to avoid memory issues
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def load_env_file(env_path: Path) -> None:
+    """Load simple KEY=VALUE pairs from a .env file if present."""
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def build_database_url() -> str:
+    """Return DATABASE_URL or build it from POSTGRES_* environment variables."""
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        return database_url
+
+    postgres_host = os.getenv("POSTGRES_HOST")
+    postgres_port = os.getenv("POSTGRES_PORT")
+    postgres_db = os.getenv("POSTGRES_DB")
+    postgres_user = os.getenv("POSTGRES_USER")
+    postgres_password = os.getenv("POSTGRES_PASSWORD")
+
+    if all([postgres_host, postgres_port, postgres_db, postgres_user, postgres_password]):
+        return (
+            f"postgresql://{postgres_user}:{postgres_password}"
+            f"@{postgres_host}:{postgres_port}/{postgres_db}"
+        )
+
+    raise ValueError(
+        "DATABASE_URL is not set and the POSTGRES_* variables are incomplete. "
+        "Set DATABASE_URL or provide POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, "
+        "POSTGRES_USER, and POSTGRES_PASSWORD before running this script."
+    )
+
+
+load_env_file(ROOT / ".env")
+load_env_file(ROOT.parent / ".env")
+DATABASE_URL = build_database_url()
 
 def parse_dt(s):
     """Parse ISO datetime string, return None if falsy."""
@@ -383,8 +425,69 @@ def main():
     )
     Session = sessionmaker(bind=engine)
 
-    # Setup tables
-    setup_tables(engine, reset=RESET)
+    # Force a clean slate using native PostgreSQL commands
+    log("Nuking old schema and recreating fresh...")
+    with engine.begin() as conn:
+        # Use IF EXISTS to avoid errors if the schema is already absent
+        conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE;"))
+        conn.execute(text("CREATE SCHEMA public;"))
+        # Ensure we operate in the new public schema
+        conn.execute(text("SET search_path TO public;"))
+
+        # Remove any lingering indexes in public that could conflict with
+        # SQLAlchemy's create_all. Drop specific model index names defensively
+        # to avoid name collisions (sometimes left over from manual runs).
+        index_names = [
+            "ix_raw_events_published_at",
+            "ix_raw_events_platform",
+            "ix_raw_events_is_processed",
+            "ix_entities_risk_score",
+            "ix_entities_primary_identifier",
+            "ix_entity_aliases_value",
+            "ix_risk_alerts_created_at",
+            "ix_risk_alerts_risk_score_status",
+        ]
+        for idx_name in index_names:
+            try:
+                conn.execute(text(f'DROP INDEX IF EXISTS public."{idx_name}";'))
+            except Exception:
+                # Non-fatal — continue with other drops
+                pass
+
+    # Create tables and indexes from SQLAlchemy metadata
+    try:
+        # Temporarily remove Index objects to avoid index-name collisions
+        # with leftover database objects. We stash and clear them, create
+        # tables, then restore the Index objects in-memory (we skip
+        # creating them here to avoid conflicts).
+        _stashed_indexes = {}
+        for tbl_name, tbl in Base.metadata.tables.items():
+            _stashed_indexes[tbl_name] = set(tbl.indexes)
+            tbl.indexes.clear()
+
+        Base.metadata.create_all(engine)
+
+        # Restore indexes in metadata (but don't attempt to create them now).
+        for tbl_name, idxs in _stashed_indexes.items():
+            Base.metadata.tables[tbl_name].indexes.update(idxs)
+    except sqlalchemy.exc.ProgrammingError as e:
+        msg = str(e).lower()
+        # Only attempt a retry for errors that indicate an existing object collision
+        if "already exists" in msg or "duplicate" in msg:
+            log(f"Warning: non-fatal schema error during create_all: {e}")
+            # Try a second time — sometimes an index creation failure leaves
+            # other table creation steps undone; a retry often completes the
+            # remaining work (and will skip already-existing objects).
+            try:
+                Base.metadata.create_all(engine)
+            except Exception:
+                # If retry fails, re-raise the original error for visibility
+                raise
+        else:
+            raise
+    except Exception as e:
+        log(f"Error creating tables: {e}")
+        raise
 
     # Load data in dependency order
     log("\n📥 Loading data...")

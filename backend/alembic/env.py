@@ -5,12 +5,60 @@ from sqlalchemy import pool
 
 from alembic import context
 
-from app.core.database import Base
-import app.models # This imports the __init__.py you made, loading all tables!
+from app.models import Base  # Model definitions live in app.models and expose Base directly.
+import app.models # Import the model module so all tables are registered on Base.metadata.
+import os
+from pathlib import Path
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
+
+# Load environment variables from .env if present.
+def load_env_file(env_path: Path) -> None:
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key, value)
+
+
+ROOT = Path(__file__).resolve().parents[2]
+load_env_file(ROOT / ".env")
+load_env_file(ROOT.parent / ".env")
+
+def build_database_url() -> str:
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        return database_url
+
+    postgres_host = os.getenv("POSTGRES_HOST")
+    postgres_port = os.getenv("POSTGRES_PORT")
+    postgres_db = os.getenv("POSTGRES_DB")
+    postgres_user = os.getenv("POSTGRES_USER")
+    postgres_password = os.getenv("POSTGRES_PASSWORD")
+
+    if all([postgres_host, postgres_port, postgres_db, postgres_user, postgres_password]):
+        return (
+            f"postgresql://{postgres_user}:{postgres_password}"
+            f"@{postgres_host}:{postgres_port}/{postgres_db}"
+        )
+
+    raise ValueError(
+        "DATABASE_URL is not set and the POSTGRES_* variables are incomplete. "
+        "Set DATABASE_URL or provide POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, "
+        "POSTGRES_USER, and POSTGRES_PASSWORD before running alembic commands."
+    )
+
+
+config.set_main_option("sqlalchemy.url", build_database_url())
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
