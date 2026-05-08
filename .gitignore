@@ -1,0 +1,41 @@
+# ========================
+# SECURITY & ENV VARIABLES
+# ========================
+.env
+.env.*
+!.env.example
+
+# ========================
+# PYTHON / BACKEND / ML
+# ========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.venv/
+env/
+.pytest_cache/
+*.log
+celerybeat-schedule.db
+celerybeat-schedule.bak
+celerybeat-schedule.dir
+/models/
+
+# ========================
+# NODE / FRONTEND
+# ========================
+node_modules/
+dist/
+dist-ssr/
+build/
+.npm/
+*.local
+
+# ========================
+# IDE & OS FILES
+# ========================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
