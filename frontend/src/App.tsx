@@ -1,17 +1,14 @@
-// src/App.jsx
-
 import { useEffect, useState } from "react";
 
 function App() {
 
     const [alerts, setAlerts] = useState([]);
-    const [socket, setSocket] = useState(null);
 
     useEffect(() => {
 
-        // WebSocket Connection
+        // Connect to FastAPI WebSocket
         const ws = new WebSocket(
-            "ws://localhost/ws/alerts"
+            "ws://localhost:8000/ws/alerts"
         );
 
         ws.onopen = () => {
@@ -33,10 +30,8 @@ function App() {
         };
 
         ws.onclose = () => {
-            console.log("WebSocket Disconnected");
+            console.log("WebSocket Closed");
         };
-
-        setSocket(ws);
 
         // Cleanup
         return () => {
@@ -50,16 +45,23 @@ function App() {
 
         try {
 
-            await fetch(
-                "/api/send-alert",
+            const response = await fetch(
+                "http://localhost:8000/api/send-alert",
                 {
                     method: "POST"
                 }
             );
 
+            const data = await response.json();
+
+            console.log(data);
+
         } catch (error) {
 
-            console.log("Error sending alert:", error);
+            console.log(
+                "Error sending alert:",
+                error
+            );
         }
     };
 
