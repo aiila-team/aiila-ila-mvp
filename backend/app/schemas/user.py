@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr
 
 
 class UserCreate(BaseModel):
+    username: str
     email: EmailStr
     full_name: str
     password: str
@@ -16,6 +17,5 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
-    
-    class Config:
-        from_attributes = True
+
+    model_config = {"from_attributes": True}
