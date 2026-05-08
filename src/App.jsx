@@ -6,8 +6,6 @@ import AlertInbox from './pages/AlertInbox.jsx';
 import KeywordManager from './pages/KeywordManager.jsx';
 import SourceMonitor from './pages/SourceMonitor.jsx';
 import GraphView from './pages/GraphView.jsx';
-import EntitiesPage from './pages/EntitiesPage.jsx';
-
 
 function PlaceholderPage({ title }) {
   return (
@@ -34,7 +32,7 @@ export default function App() {
       case 'keywords': return <KeywordManager />;
       case 'sources': return <SourceMonitor />;
       case 'graph': return <GraphView />;
-      case 'entities': return <EntitiesPage />;
+      case 'entities': return <PlaceholderPage title="Entity List" />;
       default: return <DashboardHome onNavigate={setPage} />;
     }
   };
