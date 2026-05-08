@@ -514,14 +514,18 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     total_entities  = db.query(Entity).count()
     flagged_entities = db.query(Entity).filter(Entity.is_flagged == True).count()
     alerts_today    = db.query(RiskAlert).filter(RiskAlert.created_at >= today_start).count()
+    
+    # ── FIXED: Using Enums instead of strings ──
     critical_alerts = db.query(RiskAlert).filter(
-        RiskAlert.risk_level == "critical",
-        RiskAlert.status == "new"
+        RiskAlert.risk_level == RiskLevel.CRITICAL,
+        RiskAlert.status == AlertStatus.NEW
     ).count()
+    
     high_alerts = db.query(RiskAlert).filter(
-        RiskAlert.risk_level == "high",
-        RiskAlert.status == "new"
+        RiskAlert.risk_level == RiskLevel.HIGH,
+        RiskAlert.status == AlertStatus.NEW
     ).count()
+    
     active_sources  = db.query(Source).filter(Source.is_active == True).count()
     events_today    = db.query(RawEvent).filter(RawEvent.ingested_at >= today_start).count()
 
