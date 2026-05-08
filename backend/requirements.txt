@@ -1,0 +1,26 @@
+# requirements.txt
+
+fastapi
+uvicorn[standard]
+
+# Database
+psycopg2-binary
+sqlalchemy
+neo4j
+
+# Redis + Background Tasks
+redis
+celery
+flower
+
+# WebSocket Support
+websockets
+
+# Environment Variables
+python-dotenv
+
+# Validation
+pydantic
+
+# HTTP Client
+httpx
