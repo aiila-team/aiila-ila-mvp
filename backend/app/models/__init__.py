@@ -1,5 +1,3 @@
-
-from app.models.user import User
 """
 ILA — Intelligence Layer for Analytics
 SQLAlchemy ORM Models (PostgreSQL)
@@ -342,4 +340,3 @@ class EvidencePackage(Base):
     legal_disclaimer = Column(Text)
     generated_at    = Column(DateTime(timezone=True), server_default=func.now())
     expires_at      = Column(DateTime(timezone=True))   # auto-delete after retention period
-
