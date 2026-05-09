@@ -17,6 +17,7 @@ Endpoints in this file:
   GET  /api/v1/dashboard/stats         — KPI cards for dashboard home
 """
 
+from uuid import UUID
 from typing import Optional, List
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,19 +25,22 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc, asc, func, and_, or_
 from pydantic import BaseModel
 
-from app.core.database import get_db
+from app.db.session import get_db
 from app.models import (
     Entity, EntityAlias, RiskAlert, RawEvent, EntityEvent,
     Source, AlertStatus, RiskLevel, AlertType
 )
 
-router = APIRouter()
+alerts_router = APIRouter(prefix="/alerts", tags=["alerts"])
+entities_router = APIRouter(prefix="/entities", tags=["entities"])
+dashboard_router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+search_router = APIRouter(prefix="/search", tags=["search"])
 
 
 # ─── Pydantic Schemas (Response Models) ───────────────────────────────────────
 
 class AliasOut(BaseModel):
-    id: str
+    id: UUID
     alias_type: str
     alias_value: str
     platform: Optional[str]
@@ -138,7 +142,7 @@ class DashboardStats(BaseModel):
 
 # ─── Alert Endpoints ──────────────────────────────────────────────────────────
 
-@router.get("/alerts", response_model=dict)
+@alerts_router.get("", response_model=dict)
 def list_alerts(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -216,7 +220,7 @@ def list_alerts(
     }
 
 
-@router.get("/alerts/{alert_id}", response_model=dict)
+@alerts_router.get("/{alert_id}", response_model=dict)
 def get_alert(alert_id: str, db: Session = Depends(get_db)):
     """Single alert with full entity detail."""
     alert = db.query(RiskAlert).filter(RiskAlert.id == alert_id).first()
@@ -269,7 +273,7 @@ def get_alert(alert_id: str, db: Session = Depends(get_db)):
     }
 
 
-@router.patch("/alerts/{alert_id}/status", response_model=dict)
+@alerts_router.patch("/{alert_id}/status", response_model=dict)
 def update_alert_status(
     alert_id: str,
     update: AlertStatusUpdate,
@@ -298,7 +302,7 @@ def update_alert_status(
 
 # ─── Entity Endpoints ─────────────────────────────────────────────────────────
 
-@router.get("/entities", response_model=dict)
+@entities_router.get("", response_model=dict)
 def list_entities(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -365,7 +369,7 @@ def list_entities(
     }
 
 
-@router.get("/entities/{entity_id}", response_model=dict)
+@entities_router.get("/{entity_id}", response_model=dict)
 def get_entity_profile(entity_id: str, db: Session = Depends(get_db)):
     """
     Full entity profile — the detail page an analyst sees when investigating.
@@ -412,7 +416,7 @@ def get_entity_profile(entity_id: str, db: Session = Depends(get_db)):
     }
 
 
-@router.get("/entities/{entity_id}/timeline", response_model=dict)
+@entities_router.get("/{entity_id}/timeline", response_model=dict)
 def get_entity_timeline(
     entity_id: str,
     page: int = Query(1, ge=1),
@@ -459,7 +463,7 @@ def get_entity_timeline(
     }
 
 
-@router.get("/entities/{entity_id}/explain", response_model=dict)
+@entities_router.get("/{entity_id}/explain", response_model=dict)
 def explain_entity_risk(entity_id: str, db: Session = Depends(get_db)):
     """
     ML Explainability endpoint — returns the top risk factors for an entity.
@@ -502,7 +506,7 @@ def explain_entity_risk(entity_id: str, db: Session = Depends(get_db)):
 
 # ─── Dashboard Endpoint ───────────────────────────────────────────────────────
 
-@router.get("/dashboard/stats", response_model=dict)
+@dashboard_router.get("/stats", response_model=dict)
 def get_dashboard_stats(db: Session = Depends(get_db)):
     """
     Aggregate stats for the dashboard home page KPI cards.
@@ -583,7 +587,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
 
 # ─── Search Endpoint ──────────────────────────────────────────────────────────
 
-@router.get("/search", response_model=dict)
+@search_router.get("", response_model=dict)
 def global_search(
     q: str = Query(..., min_length=2),
     db: Session = Depends(get_db),
