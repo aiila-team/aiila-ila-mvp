@@ -5,7 +5,7 @@ from sqlalchemy import pool
 
 from alembic import context
 
-from app.core.database import Base
+from app.db.session import Base
 import app.models # This imports the __init__.py you made, loading all tables!
 
 # this is the Alembic Config object, which provides
