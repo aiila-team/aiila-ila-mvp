@@ -97,7 +97,13 @@ class RawEvent(Base):
     event_type = Column(String, nullable=False)
     timestamp = Column(DateTime(timezone=True), nullable=False)
     metadata_ = Column("metadata", JSON)
-    processed = Column(Boolean, default=False)
+    is_processed = Column(Boolean, default=False)
+    extracted_entities = Column(JSON)  # JSONB in PostgreSQL
+    sentiment_score = Column(Float)
+    anomaly_score = Column(Float)
+    content_hash = Column(String)  # For deduplication
+    is_duplicate = Column(Boolean, default=False)
+    duplicate_of = Column(UUID(as_uuid=True), ForeignKey("raw_events.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
