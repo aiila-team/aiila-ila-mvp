@@ -1,0 +1,317 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "last_updated": "2026-05",
+    "description": "ILA Fraud Pattern Templates — evaluated by services/pattern_matcher.py",
+    "schema": {
+      "id":           "Unique template identifier string",
+      "name":         "Human-readable template name (shown in alerts)",
+      "alert_type":   "Maps to AlertType enum in models/__init__.py",
+      "weight":       "Contribution to pattern_match_score (0.0–1.0)",
+      "description":  "What this pattern detects",
+      "conditions":   "List of field-level rules (ALL must match unless 'mode' is 'any')",
+      "mode":         "'all' (default) = all conditions must match; 'any' = at least one",
+      "severity":     "low | medium | high | critical — baseline risk level if matched",
+      "tags":         "Free-form tags for filtering in the dashboard"
+    }
+  },
+
+  "templates": [
+
+    {
+      "id": "FT-001",
+      "name": "Mule Account Velocity Pattern",
+      "alert_type": "financial_fraud",
+      "weight": 1.0,
+      "severity": "critical",
+      "description": "Detects mule accounts that receive and rapidly forward UPI funds. Classic pattern: high inbound transaction count, many unique senders, fast forwarding (low balance dwell time), multiple recipient accounts.",
+      "mode": "all",
+      "tags": ["upi", "mule", "money_laundering", "financial"],
+      "conditions": [
+        {
+          "field": "transaction_count_1h",
+          "operator": "gte",
+          "value": 20,
+          "description": "20+ transactions in 1 hour — far above normal individual rate"
+        },
+        {
+          "field": "unique_recipients_1h",
+          "operator": "gte",
+          "value": 10,
+          "description": "Funds forwarded to 10+ different accounts — fan-out behaviour"
+        },
+        {
+          "field": "avg_amount_deviation",
+          "operator": "gte",
+          "value": 2.0,
+          "description": "Transaction amounts deviate > 2 std from entity baseline"
+        },
+        {
+          "field": "entity_type",
+          "operator": "in",
+          "value": ["upi_account", "phone"],
+          "description": "Pattern is specific to UPI and phone-linked identifiers"
+        }
+      ]
+    },
+
+    {
+      "id": "FT-002",
+      "name": "Coordinated Inauthentic Posting",
+      "alert_type": "coordinated_inauthentic",
+      "weight": 0.90,
+      "severity": "high",
+      "description": "Multiple accounts posting near-identical content within a short time window. Hallmarks: high post frequency, very low unique content ratio, low reply ratio (broadcast-only behaviour), multiple platforms active simultaneously.",
+      "mode": "all",
+      "tags": ["social", "bot", "propaganda", "coordinated"],
+      "conditions": [
+        {
+          "field": "post_frequency_1h",
+          "operator": "gte",
+          "value": 30,
+          "description": "30+ posts in 1 hour — humanly difficult to sustain"
+        },
+        {
+          "field": "reply_ratio",
+          "operator": "lte",
+          "value": 0.05,
+          "description": "< 5% of posts are replies — pure broadcast, no engagement"
+        },
+        {
+          "field": "keyword_hit_rate",
+          "operator": "gte",
+          "value": 0.60,
+          "description": "60%+ of posts contain threat keywords — on-message bot"
+        },
+        {
+          "field": "unique_platforms_1h",
+          "operator": "gte",
+          "value": 2,
+          "description": "Active on 2+ platforms simultaneously — cross-platform campaign"
+        }
+      ]
+    },
+
+    {
+      "id": "FT-003",
+      "name": "SIM Swap Fraud",
+      "alert_type": "sim_swap",
+      "weight": 0.95,
+      "severity": "critical",
+      "description": "SIM swap precursor pattern: sudden spike in UPI login attempts from a different device, combined with high transaction velocity immediately after. Often preceded by phishing messages requesting OTP.",
+      "mode": "all",
+      "tags": ["sim_swap", "upi", "otp", "telecom", "identity_fraud"],
+      "conditions": [
+        {
+          "field": "transaction_count_1h",
+          "operator": "gte",
+          "value": 5,
+          "description": "Burst of transactions immediately after SIM change"
+        },
+        {
+          "field": "avg_amount_deviation",
+          "operator": "gte",
+          "value": 3.0,
+          "description": "Transaction amounts far above the entity's normal range"
+        },
+        {
+          "field": "unique_recipients_1h",
+          "operator": "gte",
+          "value": 3,
+          "description": "Funds sent to 3+ new recipients (attacker-controlled accounts)"
+        },
+        {
+          "field": "device_change_flag",
+          "operator": "eq",
+          "value": true,
+          "description": "Device fingerprint changed in last 24 hours — SIM swap indicator"
+        }
+      ]
+    },
+
+    {
+      "id": "FT-004",
+      "name": "Phishing Domain Cluster",
+      "alert_type": "phishing",
+      "weight": 0.85,
+      "severity": "high",
+      "description": "Cluster of newly-registered domains with high visual similarity to legitimate Indian banking / government portals (sbi, hdfc, uidai, irctc patterns). Linked to a common registrant entity, burst-registered within a short window.",
+      "mode": "any",
+      "tags": ["phishing", "domain", "banking", "spoofing"],
+      "conditions": [
+        {
+          "field": "domain_similarity_score",
+          "operator": "gte",
+          "value": 0.75,
+          "description": "Domain name is ≥75% similar to a known legitimate domain (edit distance)"
+        },
+        {
+          "field": "domain_age_days",
+          "operator": "lte",
+          "value": 30,
+          "description": "Domain registered within the last 30 days"
+        },
+        {
+          "field": "linked_domain_count",
+          "operator": "gte",
+          "value": 3,
+          "description": "Registrant controls 3+ suspicious domains — bulk registration"
+        },
+        {
+          "field": "keyword_hit_rate",
+          "operator": "gte",
+          "value": 0.50,
+          "description": "50%+ of content on the domain matches phishing keyword templates"
+        }
+      ]
+    },
+
+    {
+      "id": "FT-005",
+      "name": "Crypto-to-UPI Layering Network",
+      "alert_type": "financial_fraud",
+      "weight": 0.92,
+      "severity": "critical",
+      "description": "Detects the crypto→UPI layering pattern used for money laundering: crypto received to a wallet, converted via P2P exchange, then rapidly distributed to mule UPI accounts. Signature: crypto wallet co-occurrence with high-velocity UPI accounts in the same entity graph cluster.",
+      "mode": "all",
+      "tags": ["crypto", "upi", "money_laundering", "layering", "financial"],
+      "conditions": [
+        {
+          "field": "has_crypto_alias",
+          "operator": "eq",
+          "value": true,
+          "description": "Entity has at least one crypto wallet alias"
+        },
+        {
+          "field": "has_upi_alias",
+          "operator": "eq",
+          "value": true,
+          "description": "Entity also has at least one UPI VPA alias (cross-type linkage)"
+        },
+        {
+          "field": "transaction_count_1h",
+          "operator": "gte",
+          "value": 10,
+          "description": "High UPI transaction velocity after crypto receipt"
+        },
+        {
+          "field": "network_hop_distance",
+          "operator": "lte",
+          "value": 2,
+          "description": "Within 2 hops of a known flagged entity in the Neo4j graph"
+        }
+      ]
+    },
+
+    {
+      "id": "FT-006",
+      "name": "Hawala Network Node",
+      "alert_type": "financial_fraud",
+      "weight": 0.88,
+      "severity": "high",
+      "description": "Identifies potential hawala broker nodes: entities that act as intermediaries with high in-degree and out-degree in the transaction graph, operating across multiple cities, with no legitimate business profile.",
+      "mode": "all",
+      "tags": ["hawala", "financial", "money_laundering", "broker"],
+      "conditions": [
+        {
+          "field": "transaction_count_1h",
+          "operator": "gte",
+          "value": 15,
+          "description": "High transaction throughput"
+        },
+        {
+          "field": "unique_recipients_1h",
+          "operator": "gte",
+          "value": 8,
+          "description": "High fan-out (broker distributing to many)"
+        },
+        {
+          "field": "network_centrality",
+          "operator": "gte",
+          "value": 0.60,
+          "description": "High betweenness centrality in entity graph — broker position"
+        },
+        {
+          "field": "avg_amount_deviation",
+          "operator": "gte",
+          "value": 1.5,
+          "description": "Unusual transaction amounts for stated profile"
+        }
+      ]
+    },
+
+    {
+      "id": "FT-007",
+      "name": "Radicalization Content Amplifier",
+      "alert_type": "propaganda",
+      "weight": 0.80,
+      "severity": "high",
+      "description": "Accounts that systematically amplify extremist or radicalizing content: high post frequency, consistently negative sentiment, high keyword hit rate on watchlist terms, and evidence of cross-platform coordination.",
+      "mode": "all",
+      "tags": ["propaganda", "radicalisation", "social", "extremism"],
+      "conditions": [
+        {
+          "field": "sentiment_score",
+          "operator": "lte",
+          "value": -0.60,
+          "description": "Average sentiment ≤ -0.60 — consistently hostile/fear-inducing content"
+        },
+        {
+          "field": "keyword_hit_rate",
+          "operator": "gte",
+          "value": 0.40,
+          "description": "40%+ of posts match radicalisation/extremism keywords"
+        },
+        {
+          "field": "post_frequency_1h",
+          "operator": "gte",
+          "value": 15,
+          "description": "High posting volume — amplification behaviour"
+        },
+        {
+          "field": "reply_ratio",
+          "operator": "lte",
+          "value": 0.10,
+          "description": "Low engagement — broadcasting, not conversing"
+        }
+      ]
+    },
+
+    {
+      "id": "FT-008",
+      "name": "OTP Harvesting Scam",
+      "alert_type": "phishing",
+      "weight": 0.87,
+      "severity": "high",
+      "description": "Accounts or numbers that send bulk messages containing OTP-solicitation patterns. Detects the social engineering phase of financial fraud before the transaction layer.",
+      "mode": "all",
+      "tags": ["otp", "phishing", "social_engineering", "sms"],
+      "conditions": [
+        {
+          "field": "post_frequency_1h",
+          "operator": "gte",
+          "value": 50,
+          "description": "Bulk messaging volume (50+ messages/hour)"
+        },
+        {
+          "field": "keyword_hit_rate",
+          "operator": "gte",
+          "value": 0.70,
+          "description": "70%+ messages match OTP/phishing keyword patterns"
+        },
+        {
+          "field": "entity_type",
+          "operator": "in",
+          "value": ["phone", "telegram", "social_handle"],
+          "description": "Applies to communication identifiers only"
+        },
+        {
+          "field": "reply_ratio",
+          "operator": "lte",
+          "value": 0.02,
+          "description": "Almost zero replies — pure outbound spam"
+        }
+      ]
+    }
+  ]
+}
