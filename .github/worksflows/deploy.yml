@@ -1,0 +1,64 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+
+  deploy:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Deploy Application to EC2
+        uses: appleboy/ssh-action@v1.0.3
+
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+
+          script: |
+
+            echo "====================================="
+            echo "AIILA Production Deployment Started"
+            echo "====================================="
+
+            cd ~/aiila-ila-mvp
+
+            echo "Pulling latest code from GitHub..."
+
+            git pull origin main
+
+            echo "Stopping old containers..."
+
+            docker compose \
+              -f docker-compose.yml \
+              -f docker-compose.prod.yml \
+              down
+
+            echo "Building and starting new containers..."
+
+            docker compose \
+              -f docker-compose.yml \
+              -f docker-compose.prod.yml \
+              up -d --build
+
+            echo "Removing unused Docker images..."
+
+            docker system prune -f
+
+            echo "Checking running containers..."
+
+            docker ps
+
+            echo "====================================="
+            echo "Deployment Completed Successfully"
+            echo "====================================="
