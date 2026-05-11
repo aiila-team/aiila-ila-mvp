@@ -30,9 +30,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # ── Ensure app package is on path ─────────────────────────────────────────────
-ROOT = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 # Look specifically inside the backend folder for the 'app' module
-BACKEND_PATH = ROOT / "backend"
+BACKEND_PATH = REPO_ROOT / "backend"
 if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
 
@@ -93,8 +93,8 @@ def build_database_url() -> str:
     )
 
 
-load_env_file(ROOT / ".env")
-load_env_file(ROOT.parent / ".env")
+load_env_file(BACKEND_PATH / ".env")
+load_env_file(REPO_ROOT / ".env")
 DATABASE_URL = build_database_url()
 
 def parse_dt(s):
@@ -157,6 +157,22 @@ def load_users(session, records: list) -> dict:
     return id_map
 
 
+def parse_tier(value):
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.startswith("tier_"):
+        try:
+            return int(value.split("tier_")[1])
+        except ValueError:
+            return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def load_sources(session, records: list) -> dict:
     """Insert data sources. Returns {name → id} map."""
     log(f"Loading {len(records)} sources...")
@@ -166,14 +182,13 @@ def load_sources(session, records: list) -> dict:
             id=r["id"],
             name=r["name"],
             source_type=r["source_type"],
-            tier=r["tier"],
+            tier=parse_tier(r.get("tier")),
             url=r.get("url"),
             description=r.get("description"),
             is_active=r.get("is_active", True),
             reliability_multiplier=r.get("reliability_multiplier", 1.0),
-            crawl_interval_minutes=r.get("crawl_interval_minutes", 15),
             last_crawled_at=parse_dt(r.get("last_crawled_at")),
-            event_count_today=r.get("event_count_today", 0),
+            events_today=r.get("event_count_today", 0),
         )
         session.merge(src)
         id_map[r["name"]] = r["id"]
@@ -189,14 +204,14 @@ def load_keywords(session, records: list) -> dict:
     for r in records:
         kw = Keyword(
             id=r["id"],
-            word=r["word"],
+            word=r.get("word") or r.get("keyword"),
             category=r.get("category"),
             language=r.get("language", "en"),
             is_active=r.get("is_active", True),
             match_count=r.get("match_count", 0),
         )
         session.merge(kw)
-        id_map[r["word"]] = r["id"]
+        id_map[kw.word] = r["id"]
     session.flush()
     log(f"   ✓ {len(records)} keywords loaded")
     return id_map
@@ -280,8 +295,8 @@ def load_events(session, records: list) -> dict:
                 external_id=r.get("external_id"),
                 content=r["content"],
                 content_language=r.get("content_language", "unknown"),
-                translated_content=r.get("translated_content"),
-                url=r.get("url"),
+                translated_content=r.get("translated_content"),                event_type=r.get("event_type", "unknown"),  # Add event_type
+                timestamp=parse_dt(r.get("timestamp")),  # Add timestamp                url=r.get("url"),
                 author_handle=r.get("author_handle"),
                 platform=r.get("platform"),
                 published_at=parse_dt(r.get("published_at")),

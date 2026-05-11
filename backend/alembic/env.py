@@ -30,9 +30,8 @@ def load_env_file(env_path: Path) -> None:
         os.environ.setdefault(key, value)
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parent.parent
 load_env_file(ROOT / ".env")
-load_env_file(ROOT.parent / ".env")
 
 def build_database_url() -> str:
     database_url = os.getenv("DATABASE_URL")

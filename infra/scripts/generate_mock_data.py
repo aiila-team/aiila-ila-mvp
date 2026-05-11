@@ -659,6 +659,8 @@ def generate_all(
             "content": content,
             "content_language": lang,
             "translated_content": content if lang == "en" else f"[TRANSLATED] {content}",
+            "event_type": platform,  # Add event_type — same as platform
+            "timestamp": published_at.isoformat(),  # Add timestamp — same as published_at
             "url": f"https://{platform}.example.com/post/{random.randint(100000, 999999)}",
             "author_handle": person.get("tg_handle") if platform == "telegram" else person.get("tw_handle"),
             "platform": platform,
