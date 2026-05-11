@@ -111,7 +111,7 @@ def seed_default_user(db: Session):
             email="likhitha@aiila.in",
             hashed_password=hash_password("ila@2026"),
             full_name="Likhitha",
-            role=UserRole.ANALYST,
+            role=UserRole.ADMIN,
             is_active=True,
         )
         db.add(admin)
