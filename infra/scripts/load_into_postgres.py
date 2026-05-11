@@ -35,16 +35,46 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND_PATH = REPO_ROOT / "backend"
 if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
-
+import importlib
 import sqlalchemy
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-# Import directly from app.models (which triggers the __init__.py we made)
-from app.models import (
-    Base, User, Source, Keyword, Entity, EntityAlias,
-    RawEvent, EntityEvent, RiskAlert, EvidencePackage
-)
+# Ensure we can import the 'app' package. Try a few likely locations under backend.
+POSSIBLE_APP_PATHS = [
+    BACKEND_PATH,
+    BACKEND_PATH / "src",
+    BACKEND_PATH / "app",
+]
+
+for p in POSSIBLE_APP_PATHS:
+    p_str = str(p)
+    if p_str not in sys.path and p.exists():
+        sys.path.insert(0, p_str)
+
+# Import directly from app.models (which triggers the __init__.py in the app package)
+try:
+    from app.models import (
+        Base, User, Source, Keyword, Entity, EntityAlias,
+        RawEvent, EntityEvent, RiskAlert, EvidencePackage
+    )
+except Exception:
+    # Final attempt: try importlib to surface a clearer error if it still fails
+    importlib.invalidate_caches()
+    try:
+        mod = importlib.import_module('app.models')
+        Base = getattr(mod, 'Base')
+        User = getattr(mod, 'User')
+        Source = getattr(mod, 'Source')
+        Keyword = getattr(mod, 'Keyword')
+        Entity = getattr(mod, 'Entity')
+        EntityAlias = getattr(mod, 'EntityAlias')
+        RawEvent = getattr(mod, 'RawEvent')
+        EntityEvent = getattr(mod, 'EntityEvent')
+        RiskAlert = getattr(mod, 'RiskAlert')
+        EvidencePackage = getattr(mod, 'EvidencePackage')
+    except Exception as e:
+        raise ImportError("Could not import 'app.models'. Ensure the backend/app package is on PYTHONPATH.") from e
 # ── Config ────────────────────────────────────────────────────────────────────
 MOCK_DATA_PATH = Path(__file__).parent / "mock_data.json"
 RESET = os.environ.get("RESET", "false").lower() == "true"

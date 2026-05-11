@@ -1,0 +1,98 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "description": "ILA Source Reliability Tier Configuration",
+    "tiers": {
+      "tier1": {"multiplier": 1.5, "label": "Government / Verified Agency"},
+      "tier2": {"multiplier": 1.0, "label": "Mainstream News / Verified Social"},
+      "tier3": {"multiplier": 0.7, "label": "Unverified Social / Anonymous"},
+      "tier4": {"multiplier": 0.3, "label": "Dark Web / Suspected Disinfo"}
+    }
+  },
+
+  "explicit_sources": {
+    "tier1": [
+      "mha.gov.in", "cbi.gov.in", "ib.gov.in", "nia.gov.in",
+      "mod.gov.in", "mea.gov.in", "pib.gov.in", "ddnews.gov.in",
+      "aninews.in", "ptinews.com", "newsonair.gov.in",
+      "bsf.gov.in", "crpf.gov.in", "cisf.gov.in", "itbpolice.gov.in",
+      "police.telangana.gov.in", "delhipolice.gov.in",
+      "income tax india", "enforcement directorate", "narcotics control bureau"
+    ],
+    "tier2": [
+      "ndtv.com", "thehindu.com", "hindustantimes.com",
+      "timesofindia.indiatimes.com", "indianexpress.com",
+      "theprint.in", "thewire.in", "scroll.in", "livemint.com",
+      "businessstandard.com", "economictimes.indiatimes.com",
+      "news18.com", "zeenews.india.com", "abplive.com",
+      "tribuneindia.com", "deccanherald.com", "telegraphindia.com",
+      "firstpost.com", "outlookindia.com", "india.com",
+      "bbc.com/india", "reuters.com", "apnews.com"
+    ],
+    "tier3": [
+      "telegram_public", "reddit.com", "quora.com",
+      "sharechat.com", "koo.com", "moj.com",
+      "citizen_journalist", "anonymous_tip", "unverified_blog"
+    ],
+    "tier4": [
+      "dark_web_forum", "tor_hidden_service", "pastebin_anon",
+      "suspected_disinfo_outlet", "foreign_influence_op"
+    ]
+  },
+
+  "domain_patterns": {
+    "tier1": [
+      "*.gov.in",
+      "*.nic.in",
+      "*.mil.in",
+      "*.ac.in",
+      "aninews.in",
+      "ptinews.com"
+    ],
+    "tier2": [
+      "*.ndtv.com",
+      "*.thehindu.com",
+      "*.timesofindia.com",
+      "*.hindustantimes.com",
+      "*.indianexpress.com",
+      "feeds.feedburner.com/ndtv*",
+      "feeds.feedburner.com/timesofindia*",
+      "timesofindia.indiatimes.com/rssfeeds*",
+      "*.reuters.com",
+      "*.bbc.co.uk",
+      "*.apnews.com"
+    ],
+    "tier3": [
+      "*.blogspot.com",
+      "*.wordpress.com",
+      "t.me/*",
+      "*.telegram.org",
+      "*.reddit.com",
+      "*.quora.com"
+    ],
+    "tier4": [
+      "*.onion",
+      "*darkweb*",
+      "*dark-web*",
+      "*leaks*dump*"
+    ]
+  },
+
+  "source_type_tiers": {
+    "government":           "tier1",
+    "verified_news_agency": "tier1",
+    "rss_mainstream":       "tier2",
+    "rss":                  "tier2",
+    "mainstream_news":      "tier2",
+    "verified_social":      "tier2",
+    "social_media":         "tier3",
+    "telegram_public":      "tier3",
+    "telegram_channel":     "tier3",
+    "anonymous_channel":    "tier3",
+    "anonymous":            "tier3",
+    "unverified":           "tier3",
+    "dark_web":             "tier4",
+    "disinformation":       "tier4",
+    "foreign_influence":    "tier4"
+  }
+}
