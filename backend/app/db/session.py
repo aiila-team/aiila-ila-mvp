@@ -1,14 +1,10 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
-from app.core.config import settings
+"""
+Database session — delegates to app.core.database so ORM models and FastAPI
+share one engine, Base metadata, and SessionLocal.
+"""
 
-DATABASE_URL = "sqlite:///./ila.db"
+from app.core.database import engine, SessionLocal, Base
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-class Base(DeclarativeBase):
-    pass
 
 def get_db():
     db = SessionLocal()

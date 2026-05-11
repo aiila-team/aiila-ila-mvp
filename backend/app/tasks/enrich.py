@@ -54,20 +54,18 @@ from celery.utils.log import get_task_logger
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.celery_app import celery_app
+from app.tasks.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.models import (
     RawEvent,
     Entity,
     EntityAlias,
     EntityEvent,
-    Keyword,
     RiskAlert,
-    EntityType,
     AlertType,
     AlertStatus,
     RiskLevel,
-    Language,
+    Source,
     gen_uuid,
 )
 
@@ -76,6 +74,7 @@ from app.services.deduplication import get_dedup_service, DeduplicationResult
 from app.services.language_detection import detect_language
 from app.services.entity_extraction import extract_entities, ExtractedEntity
 from app.services.entity_resolution import EntityResolutionService
+from app.services.keyword_matcher import find_keyword_hits, hits_to_json
 
 # Neo4j sync task (fire-and-forget after entity resolution)
 from app.tasks.neo4j_sync import sync_entity_to_graph_task
@@ -489,51 +488,9 @@ def _run_pipeline(db: Session, event_id: str, result: EnrichmentResult) -> None:
 
 def _match_keywords(db: Session, event: RawEvent) -> list[dict]:
     """
-    Stage 4: Scan event content against all active keywords.
-
-    Matching logic:
-      - Exact substring match (case-insensitive) for MVP.
-        Phase 2: wildcard / regex matching.
-      - Also matches against translated_content if available.
-      - Returns list of matched keyword dicts for JSONB storage.
-      - Increments keyword.match_count as a side effect.
-
-    Returns:
-        [{"id": UUID_str, "word": str, "category": str}, ...]
+    Stage 4: Scan event text against keywords (exact, wildcard, phrase).
     """
-    active_keywords: list[Keyword] = (
-        db.query(Keyword)
-        .filter(Keyword.is_active == True)
-        .all()
-    )
-
-    if not active_keywords:
-        return []
-
-    # Build search corpus: original + translated (if exists)
-    content_lower = event.content.lower() if event.content else ""
-    translated_lower = (
-        event.translated_content.lower()
-        if event.translated_content
-        else ""
-    )
-    corpus = content_lower + " " + translated_lower
-
-    matched = []
-    for kw in active_keywords:
-        if kw.word.lower() in corpus:
-            matched.append({
-                "id":       str(kw.id),
-                "word":     kw.word,
-                "category": kw.category or "general",
-            })
-            # Increment match counter (best-effort, don't fail pipeline)
-            try:
-                kw.match_count = (kw.match_count or 0) + 1
-            except Exception:
-                pass
-
-    return matched
+    return hits_to_json(find_keyword_hits(db, event.content or "", event.translated_content))
 
 
 def _resolve_entities(
@@ -653,27 +610,32 @@ def _create_keyword_alert(
     """
     keyword_words = [m["word"] for m in matched_keywords]
     categories = list({m["category"] for m in matched_keywords})
+    first = keyword_words[0]
+    source_label = event.platform or "unknown source"
+    if event.source_id:
+        src = db.query(Source).filter(Source.id == event.source_id).first()
+        if src and src.name:
+            source_label = src.name
 
     # Determine risk level based on entity's current risk score
     risk_score = entity.risk_score or 0.0
     risk_level = _score_to_level(risk_score)
 
-    # Build a useful title and description for the analyst
-    title = (
-        f"Keyword match: '{keyword_words[0]}'"
-        + (f" (+{len(keyword_words)-1} more)" if len(keyword_words) > 1 else "")
-        + f" — {entity.display_name or entity.primary_identifier}"
-    )
+    entity_label = entity.display_name or entity.primary_identifier
+    title = f"Keyword '{first}' detected in {source_label} post by {entity_label}"
+    if len(keyword_words) > 1:
+        title += f" (+{len(keyword_words) - 1} more matches)"
     description = (
-        f"Event from {event.platform or 'unknown platform'} "
-        f"matched {len(matched_keywords)} keyword(s): {', '.join(keyword_words)}. "
+        f"Matched keywords: {', '.join(keyword_words)}. "
         f"Categories: {', '.join(categories)}. "
+        f"Platform: {event.platform or 'n/a'}. "
         f"Entity risk score: {risk_score:.2f}."
     )
 
     alert = RiskAlert(
         id=gen_uuid(),
         entity_id=str(entity.id),
+        event_id=str(event.id),
         alert_type=AlertType.KEYWORD_MATCH,
         title=title,
         description=description,
@@ -755,6 +717,7 @@ def _create_risk_threshold_alert(
     alert = RiskAlert(
         id=gen_uuid(),
         entity_id=str(entity.id),
+        event_id=str(event.id),
         alert_type=AlertType.ANOMALY_DETECTED,
         title=(
             f"High-risk entity detected: "
