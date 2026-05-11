@@ -1,0 +1,14 @@
+[run]
+source = app
+omit =
+    app/tasks/*
+    app/worker.py
+    app/services/entity_extraction.py
+    app/services/deduplication.py
+    app/services/language_detection.py
+    app/core/neo4j.py
+
+[report]
+precision = 1
+fail_under = 60
+show_missing = True
