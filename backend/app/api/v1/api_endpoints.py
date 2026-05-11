@@ -17,26 +17,50 @@ Endpoints in this file:
   GET  /api/v1/dashboard/stats         — KPI cards for dashboard home
 """
 
+import asyncio
+import json
+from uuid import UUID
 from typing import Optional, List
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import desc, asc, func, and_, or_
-from pydantic import BaseModel
+from datetime import datetime, timezone, timedelta
 
-from app.core.database import get_db
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import desc, asc, func, or_
+
+from app.core.security import get_current_user_id
+from app.db.session import get_db
 from app.models import (
-    Entity, EntityAlias, RiskAlert, RawEvent, EntityEvent,
-    Source, AlertStatus, RiskLevel, AlertType
+    Entity,
+    EntityAlias,
+    RiskAlert,
+    RawEvent,
+    EntityEvent,
+    Source,
+    AlertStatus,
+    RiskLevel,
+    AlertStatusHistory,
+    gen_uuid,
 )
 
-router = APIRouter()
+alerts_router = APIRouter(prefix="/alerts", tags=["alerts"])
+entities_router = APIRouter(prefix="/entities", tags=["entities"])
+dashboard_router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+search_router = APIRouter(prefix="/search", tags=["search"])
+
+
+def _parse_uuid(raw: str, field: str = "id") -> UUID:
+    try:
+        return UUID(str(raw))
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid UUID ({field})")
 
 
 # ─── Pydantic Schemas (Response Models) ───────────────────────────────────────
 
 class AliasOut(BaseModel):
-    id: str
+    id: UUID
     alias_type: str
     alias_value: str
     platform: Optional[str]
@@ -105,8 +129,28 @@ class AlertOut(BaseModel):
 
 
 class AlertStatusUpdate(BaseModel):
-    status: AlertStatus
-    analyst_note: Optional[str] = None
+    """Workflow: new → under_review → confirmed | dismissed."""
+
+    status: AlertStatus = Field(description="Target workflow state", examples=["under_review"])
+    analyst_note: Optional[str] = Field(None, max_length=8000, description="Optional audit note")
+
+
+_ALLOWED_STATUS_TRANSITIONS: dict[AlertStatus, set[AlertStatus]] = {
+    AlertStatus.NEW: {AlertStatus.UNDER_REVIEW, AlertStatus.INVESTIGATING},
+    AlertStatus.INVESTIGATING: {
+        AlertStatus.UNDER_REVIEW,
+        AlertStatus.CONFIRMED,
+        AlertStatus.DISMISSED,
+    },
+    AlertStatus.UNDER_REVIEW: {
+        AlertStatus.CONFIRMED,
+        AlertStatus.DISMISSED,
+        AlertStatus.INVESTIGATING,
+    },
+    AlertStatus.CONFIRMED: {AlertStatus.DISMISSED},
+    AlertStatus.DISMISSED: set(),
+    AlertStatus.RESOLVED: set(),
+}
 
 
 class EventOut(BaseModel):
@@ -138,7 +182,7 @@ class DashboardStats(BaseModel):
 
 # ─── Alert Endpoints ──────────────────────────────────────────────────────────
 
-@router.get("/alerts", response_model=dict)
+@alerts_router.get("", response_model=dict)
 def list_alerts(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -216,10 +260,52 @@ def list_alerts(
     }
 
 
-@router.get("/alerts/{alert_id}", response_model=dict)
+@alerts_router.get("/stream")
+async def alerts_stream():
+    """
+    Server-Sent Events stream of new alerts (poll-based; suitable behind single-region workers).
+    """
+
+    async def gen():
+        from app.core.database import SessionLocal
+
+        last = datetime.now(timezone.utc) - timedelta(seconds=5)
+        while True:
+            await asyncio.sleep(2)
+            db = SessionLocal()
+            try:
+                rows = (
+                    db.query(RiskAlert)
+                    .filter(RiskAlert.created_at > last)
+                    .order_by(RiskAlert.created_at)
+                    .limit(100)
+                    .all()
+                )
+                newest = last
+                for a in rows:
+                    payload = {
+                        "id": str(a.id),
+                        "title": a.title,
+                        "status": str(a.status),
+                        "risk_level": str(a.risk_level) if a.risk_level else None,
+                        "created_at": a.created_at.isoformat() if a.created_at else None,
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
+                    if a.created_at and a.created_at > newest:
+                        newest = a.created_at
+                if rows and newest > last:
+                    last = newest
+            finally:
+                db.close()
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@alerts_router.get("/{alert_id}", response_model=dict)
 def get_alert(alert_id: str, db: Session = Depends(get_db)):
     """Single alert with full entity detail."""
-    alert = db.query(RiskAlert).filter(RiskAlert.id == alert_id).first()
+    aid = _parse_uuid(alert_id, "alert_id")
+    alert = db.query(RiskAlert).filter(RiskAlert.id == aid).first()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
 
@@ -269,36 +355,68 @@ def get_alert(alert_id: str, db: Session = Depends(get_db)):
     }
 
 
-@router.patch("/alerts/{alert_id}/status", response_model=dict)
+@alerts_router.patch("/{alert_id}/status", response_model=dict)
 def update_alert_status(
     alert_id: str,
     update: AlertStatusUpdate,
     db: Session = Depends(get_db),
+    analyst_id: UUID = Depends(get_current_user_id),
 ):
     """
     Update alert status in the analyst workflow:
       new → under_review → confirmed | dismissed
 
-    Also records analyst note and timestamp.
+    Persists an audit row on each transition.
     """
-    alert = db.query(RiskAlert).filter(RiskAlert.id == alert_id).first()
+    aid = _parse_uuid(alert_id, "alert_id")
+    alert = db.query(RiskAlert).filter(RiskAlert.id == aid).first()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
+
+    old = alert.status
+    if not isinstance(old, AlertStatus):
+        try:
+            old = AlertStatus(str(old))
+        except ValueError:
+            old = AlertStatus.NEW
+
+    if update.status not in _ALLOWED_STATUS_TRANSITIONS.get(old, set()):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid transition {old!s} → {update.status!s}",
+        )
 
     alert.status = update.status
     if update.analyst_note:
         alert.analyst_note = update.analyst_note
-    if update.status in [AlertStatus.CONFIRMED, AlertStatus.DISMISSED]:
+    alert.reviewed_by = analyst_id
+    if update.status in (AlertStatus.CONFIRMED, AlertStatus.DISMISSED, AlertStatus.RESOLVED):
         alert.reviewed_at = datetime.now(timezone.utc)
 
+    db.add(
+        AlertStatusHistory(
+            id=gen_uuid(),
+            alert_id=alert.id,
+            old_status=str(old) if old is not None else None,
+            new_status=str(update.status),
+            analyst_id=analyst_id,
+            analyst_note=update.analyst_note,
+        )
+    )
     db.commit()
     db.refresh(alert)
-    return {"id": alert.id, "status": alert.status, "updated_at": datetime.now(timezone.utc)}
+    return {
+        "id": alert.id,
+        "status": alert.status,
+        "reviewed_by": alert.reviewed_by,
+        "reviewed_at": alert.reviewed_at,
+        "updated_at": datetime.now(timezone.utc),
+    }
 
 
 # ─── Entity Endpoints ─────────────────────────────────────────────────────────
 
-@router.get("/entities", response_model=dict)
+@entities_router.get("", response_model=dict)
 def list_entities(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -365,18 +483,19 @@ def list_entities(
     }
 
 
-@router.get("/entities/{entity_id}", response_model=dict)
+@entities_router.get("/{entity_id}", response_model=dict)
 def get_entity_profile(entity_id: str, db: Session = Depends(get_db)):
     """
     Full entity profile — the detail page an analyst sees when investigating.
     Returns: entity + all aliases + risk factors + alert count.
     """
-    entity = db.query(Entity).filter(Entity.id == entity_id).first()
+    eid = _parse_uuid(entity_id, "entity_id")
+    entity = db.query(Entity).filter(Entity.id == eid).first()
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
 
-    aliases = db.query(EntityAlias).filter(EntityAlias.entity_id == entity_id).all()
-    alert_count = db.query(RiskAlert).filter(RiskAlert.entity_id == entity_id).count()
+    aliases = db.query(EntityAlias).filter(EntityAlias.entity_id == eid).all()
+    alert_count = db.query(RiskAlert).filter(RiskAlert.entity_id == eid).count()
 
     return {
         "id": entity.id,
@@ -405,14 +524,13 @@ def get_entity_profile(entity_id: str, db: Session = Depends(get_db)):
                 "confidence": a.confidence,
                 "resolution_method": a.resolution_method,
                 "is_verified": a.is_verified,
-                "first_seen": a.first_seen,
             }
             for a in aliases
         ],
     }
 
 
-@router.get("/entities/{entity_id}/timeline", response_model=dict)
+@entities_router.get("/{entity_id}/timeline", response_model=dict)
 def get_entity_timeline(
     entity_id: str,
     page: int = Query(1, ge=1),
@@ -423,43 +541,61 @@ def get_entity_timeline(
     Chronological list of events mentioning this entity.
     Powers the "Source Timeline" panel on the entity profile page.
     """
-    entity = db.query(Entity).filter(Entity.id == entity_id).first()
+    eid = _parse_uuid(entity_id, "entity_id")
+    entity = db.query(Entity).filter(Entity.id == eid).first()
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
 
-    # Join through entity_events → raw_events
+    ts = func.coalesce(RawEvent.published_at, RawEvent.timestamp, RawEvent.created_at)
     query = (
         db.query(RawEvent)
+        .options(joinedload(RawEvent.source))
         .join(EntityEvent, EntityEvent.event_id == RawEvent.id)
-        .filter(EntityEvent.entity_id == entity_id)
-        .order_by(desc(RawEvent.published_at))
+        .filter(EntityEvent.entity_id == eid)
+        .order_by(desc(ts))
     )
     total = query.count()
     events = query.offset((page - 1) * page_size).limit(page_size).all()
 
-    return {
-        "entity_id": entity_id,
-        "items": [
+    items = []
+    for e in events:
+        ee = (
+            db.query(EntityEvent)
+            .filter(EntityEvent.event_id == e.id, EntityEvent.entity_id != eid)
+            .all()
+        )
+        src = e.source
+        ts_val = e.published_at or e.timestamp or e.created_at
+        items.append(
             {
                 "id": e.id,
-                "content": e.content[:300] + "..." if len(e.content) > 300 else e.content,
+                "timestamp": ts_val,
+                "content": e.content[:300] + "..." if e.content and len(e.content) > 300 else (e.content or ""),
                 "platform": e.platform,
                 "author_handle": e.author_handle,
                 "content_language": e.content_language,
                 "sentiment_score": e.sentiment_score,
                 "published_at": e.published_at,
                 "url": e.url,
+                "source": {"id": src.id, "name": src.name, "tier": src.tier} if src else None,
                 "extracted_entities": e.extracted_entities or [],
+                "entity_associations": [
+                    {"entity_id": str(x.entity_id), "role": x.role, "relevance_score": x.relevance_score}
+                    for x in ee
+                ],
             }
-            for e in events
-        ],
+        )
+
+    return {
+        "entity_id": entity_id,
+        "items": items,
         "total": total,
         "page": page,
         "page_size": page_size,
     }
 
 
-@router.get("/entities/{entity_id}/explain", response_model=dict)
+@entities_router.get("/{entity_id}/explain", response_model=dict)
 def explain_entity_risk(entity_id: str, db: Session = Depends(get_db)):
     """
     ML Explainability endpoint — returns the top risk factors for an entity.
@@ -467,7 +603,8 @@ def explain_entity_risk(entity_id: str, db: Session = Depends(get_db)):
 
     Returns structured breakdown of each contributing factor with score.
     """
-    entity = db.query(Entity).filter(Entity.id == entity_id).first()
+    eid = _parse_uuid(entity_id, "entity_id")
+    entity = db.query(Entity).filter(Entity.id == eid).first()
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
 
@@ -502,7 +639,7 @@ def explain_entity_risk(entity_id: str, db: Session = Depends(get_db)):
 
 # ─── Dashboard Endpoint ───────────────────────────────────────────────────────
 
-@router.get("/dashboard/stats", response_model=dict)
+@dashboard_router.get("/stats", response_model=dict)
 def get_dashboard_stats(db: Session = Depends(get_db)):
     """
     Aggregate stats for the dashboard home page KPI cards.
@@ -526,23 +663,24 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         RiskAlert.status == AlertStatus.NEW
     ).count()
     
-    active_sources  = db.query(Source).filter(Source.is_active == True).count()
-    events_today    = db.query(RawEvent).filter(RawEvent.ingested_at >= today_start).count()
+    active_sources = db.query(Source).filter(Source.is_active == True).count()
+    events_today = db.query(RawEvent).filter(RawEvent.created_at >= today_start).count()
 
-    # Top 5 highest-risk entities
-    top_entities = (
+    high_risk_entities = (
         db.query(Entity)
-        .filter(Entity.is_flagged == True)
-        .order_by(desc(Entity.risk_score))
-        .limit(5)
-        .all()
+        .filter(
+            or_(Entity.risk_level == RiskLevel.HIGH, Entity.risk_level == RiskLevel.CRITICAL)
+        )
+        .count()
     )
 
+    avg_entity_risk = db.query(func.avg(Entity.risk_score)).scalar() or 0.0
+
+    # Top 5 highest-risk entities (by score)
+    top_entities = db.query(Entity).order_by(desc(Entity.risk_score)).limit(5).all()
+
     # Alerts per hour for last 24h (for sparkline chart)
-    # Simplified: just return mock hourly distribution
-    # In production: use a proper time-bucket query
     alerts_by_hour = []
-    from datetime import timedelta
     for h in range(24):
         hour_start = now - timedelta(hours=24 - h)
         hour_end = hour_start + timedelta(hours=1)
@@ -557,12 +695,18 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
 
     return {
         "total_entities": total_entities,
+        "total_entities_tracked": total_entities,
         "flagged_entities": flagged_entities,
         "alerts_today": alerts_today,
         "critical_alerts": critical_alerts,
         "high_alerts": high_alerts,
         "active_sources": active_sources,
         "events_today": events_today,
+        "high_risk_entities": high_risk_entities,
+        "risk_metrics": {
+            "avg_entity_risk_score": round(float(avg_entity_risk), 3),
+            "entities_high_or_critical": high_risk_entities,
+        },
         "top_risk_entities": [
             {
                 "id": e.id,
@@ -583,59 +727,153 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
 
 # ─── Search Endpoint ──────────────────────────────────────────────────────────
 
-@router.get("/search", response_model=dict)
-def global_search(
-    q: str = Query(..., min_length=2),
-    db: Session = Depends(get_db),
-):
-    """
-    Global search across entities and alerts.
-    Matches on: entity identifier, display name, alias values, alert title.
 
-    Example: GET /api/v1/search?q=+91987654
-    """
+def _search_fallback(db: Session, q: str, limit: int):
+    like = f"%{q}%"
     entities = (
         db.query(Entity)
-        .join(EntityAlias, EntityAlias.entity_id == Entity.id, isouter=True)
+        .outerjoin(EntityAlias, EntityAlias.entity_id == Entity.id)
         .filter(
             or_(
-                Entity.primary_identifier.ilike(f"%{q}%"),
-                Entity.display_name.ilike(f"%{q}%"),
-                EntityAlias.alias_value.ilike(f"%{q}%"),
+                Entity.primary_identifier.ilike(like),
+                Entity.display_name.ilike(like),
+                EntityAlias.alias_value.ilike(like),
             )
         )
         .distinct()
-        .limit(10)
+        .limit(limit)
         .all()
     )
+    alerts = db.query(RiskAlert).filter(RiskAlert.title.ilike(like)).limit(limit).all()
+    events = db.query(RawEvent).filter(RawEvent.content.ilike(like)).limit(limit).all()
+    ranked = []
+    for e in entities:
+        ranked.append({"kind": "entity", "score": 0.5, "record": e})
+    for a in alerts:
+        ranked.append({"kind": "alert", "score": 0.5, "record": a})
+    for ev in events:
+        ranked.append({"kind": "event", "score": 0.5, "record": ev})
+    return ranked
 
-    alerts = (
-        db.query(RiskAlert)
-        .filter(RiskAlert.title.ilike(f"%{q}%"))
-        .limit(5)
+
+def _search_postgres_fts(db: Session, q: str, limit: int):
+    tsq = func.plainto_tsquery("english", q)
+    ranked: list[dict] = []
+
+    ent_vec = func.to_tsvector(
+        "english",
+        func.concat(
+            func.coalesce(Entity.display_name, ""),
+            " ",
+            func.coalesce(Entity.primary_identifier, ""),
+        ),
+    )
+    ent_rows = (
+        db.query(Entity, func.ts_rank_cd(ent_vec, tsq).label("rk"))
+        .filter(ent_vec.op("@@")(tsq))
+        .order_by(desc("rk"))
+        .limit(limit)
         .all()
     )
+    for ent, rk in ent_rows:
+        ranked.append({"kind": "entity", "score": float(rk or 0), "record": ent})
+
+    alert_vec = func.to_tsvector(
+        "english",
+        func.concat(func.coalesce(RiskAlert.title, ""), " ", func.coalesce(RiskAlert.description, "")),
+    )
+    alert_rows = (
+        db.query(RiskAlert, func.ts_rank_cd(alert_vec, tsq).label("rk"))
+        .filter(alert_vec.op("@@")(tsq))
+        .order_by(desc("rk"))
+        .limit(limit)
+        .all()
+    )
+    for a, rk in alert_rows:
+        ranked.append({"kind": "alert", "score": float(rk or 0), "record": a})
+
+    ev_vec = func.to_tsvector("english", func.coalesce(RawEvent.content, ""))
+    ev_rows = (
+        db.query(RawEvent, func.ts_rank_cd(ev_vec, tsq).label("rk"))
+        .filter(ev_vec.op("@@")(tsq))
+        .order_by(desc("rk"))
+        .limit(limit)
+        .all()
+    )
+    for ev, rk in ev_rows:
+        ranked.append({"kind": "event", "score": float(rk or 0), "record": ev})
+
+    ranked.sort(key=lambda x: x["score"], reverse=True)
+    return ranked[: limit * 2]
+
+
+@search_router.get("", response_model=dict)
+def global_search(
+    q: str = Query(..., min_length=1, description="Full-text query", examples=["telegram fraud"]),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """
+    Ranked search across entities, alerts, and events.
+    PostgreSQL: `tsvector` / `plainto_tsquery`. Other dialects: ILIKE fallback.
+    """
+    dialect = db.get_bind().dialect.name
+    limit = page_size * 3
+    if dialect == "postgresql":
+        ranked = _search_postgres_fts(db, q, limit)
+    else:
+        ranked = _search_fallback(db, q, limit)
+
+    ranked.sort(key=lambda x: x["score"], reverse=True)
+    total = len(ranked)
+    slice_ = ranked[(page - 1) * page_size : page * page_size]
+
+    items = []
+    for row in slice_:
+        kind = row["kind"]
+        rec = row["record"]
+        score = row["score"]
+        if kind == "entity":
+            items.append(
+                {
+                    "kind": "entity",
+                    "score": score,
+                    "id": str(rec.id),
+                    "entity_type": str(rec.entity_type),
+                    "primary_identifier": rec.primary_identifier,
+                    "risk_score": rec.risk_score,
+                    "risk_level": str(rec.risk_level) if rec.risk_level else None,
+                }
+            )
+        elif kind == "alert":
+            items.append(
+                {
+                    "kind": "alert",
+                    "score": score,
+                    "id": str(rec.id),
+                    "title": rec.title,
+                    "risk_score": rec.risk_score,
+                    "status": str(rec.status),
+                }
+            )
+        else:
+            items.append(
+                {
+                    "kind": "event",
+                    "score": score,
+                    "id": str(rec.id),
+                    "snippet": (rec.content or "")[:280],
+                    "platform": rec.platform,
+                    "published_at": rec.published_at,
+                }
+            )
 
     return {
         "query": q,
-        "entities": [
-            {
-                "id": e.id,
-                "entity_type": e.entity_type,
-                "primary_identifier": e.primary_identifier,
-                "risk_score": e.risk_score,
-                "risk_level": e.risk_level,
-            }
-            for e in entities
-        ],
-        "alerts": [
-            {
-                "id": a.id,
-                "title": a.title,
-                "risk_score": a.risk_score,
-                "status": a.status,
-            }
-            for a in alerts
-        ],
-        "total_results": len(entities) + len(alerts),
+        "page": page,
+        "page_size": page_size,
+        "total_results": total,
+        "items": items,
+        "total_pages": (total + page_size - 1) // page_size if page_size else 0,
     }
