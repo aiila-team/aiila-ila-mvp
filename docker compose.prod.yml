@@ -1,0 +1,138 @@
+version: "3.9"
+
+# ============================================================
+# AIILA — ILA v0.1 MVP  |  docker-compose.prod.yml
+# Owner: Sridhar — Cloud + DevOps + Infrastructure
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Overrides dev settings with production-hardened configuration
+# ============================================================
+
+services:
+
+  postgres:
+    restart: always
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # REMOVED: bind mount of init script (already run)
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  neo4j:
+    restart: always
+    environment:
+      NEO4J_server_memory_heap_initial__size: 1G
+      NEO4J_server_memory_heap_max__size: 2G
+      NEO4J_server_memory_pagecache_size: 1G
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: "1.5"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  redis:
+    restart: always
+    command: >
+      redis-server
+      --maxmemory 1gb
+      --maxmemory-policy allkeys-lru
+      --save 60 1
+      --save 300 10
+      --loglevel notice
+      --requirepass ${REDIS_PASSWORD}
+      --bind 0.0.0.0
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+          cpus: "0.5"
+    # No external port in production — only internal network
+    ports: []
+
+  backend:
+    restart: always
+    # In production: built image, not bind-mounted source
+    volumes: []
+    environment:
+      APP_ENV: production
+      LOG_LEVEL: INFO
+      WORKERS: 4
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --log-level info
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+    ports: []  # Nginx handles external traffic
+
+  celery_worker:
+    restart: always
+    volumes: []
+    command: celery -A app.tasks.celery_app worker --loglevel=warning --concurrency=6 -Q default,ingest,enrich,ml,neo4j_sync
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "1.5"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  celery_beat:
+    restart: always
+    volumes: []
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+
+  flower:
+    restart: always
+    # Flower not exposed externally — accessed via Nginx auth
+    ports: []
+
+  frontend:
+    restart: always
+    volumes: []
+    # Production: serve static build via Nginx, not dev server
+    # frontend container not used in prod — Nginx serves /dist
+
+  nginx:
+    restart: always
+    volumes:
+      - ./infra/nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/certs:/etc/nginx/certs:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
