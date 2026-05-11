@@ -3,18 +3,19 @@ ILA — FastAPI Endpoints
 app/api/v1/entities.py + alerts.py combined into one reference file
 
 These are the actual HTTP endpoints your React frontend will call.
+
 Each endpoint queries PostgreSQL using SQLAlchemy and returns
 the data you loaded with the mock data scripts.
 
 Endpoints in this file:
-  GET  /api/v1/alerts                  — Alert inbox (paginated, filtered)
-  GET  /api/v1/alerts/{id}             — Single alert with entity detail
-  PATCH /api/v1/alerts/{id}/status     — Update alert status
-  GET  /api/v1/entities                — Entity list
-  GET  /api/v1/entities/{id}           — Entity profile (with aliases + risk factors)
-  GET  /api/v1/entities/{id}/timeline  — Events mentioning this entity
-  GET  /api/v1/entities/{id}/explain   — Top-3 risk factors (explainability)
-  GET  /api/v1/dashboard/stats         — KPI cards for dashboard home
+  GET  /api/v1/alerts
+  GET  /api/v1/alerts/{id}
+  PATCH /api/v1/alerts/{id}/status
+  GET  /api/v1/entities
+  GET  /api/v1/entities/{id}
+  GET  /api/v1/entities/{id}/timeline
+  GET  /api/v1/entities/{id}/explain
+  GET  /api/v1/dashboard/stats
 """
 
 from uuid import UUID
