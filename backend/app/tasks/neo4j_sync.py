@@ -62,7 +62,7 @@ from celery.utils.log import get_task_logger
 from neo4j import GraphDatabase, Driver, Session
 from neo4j.exceptions import ServiceUnavailable, TransientError
 
-from app.core.celery_app import celery_app
+from app.tasks.celery_app import celery_app
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models import Entity, EntityAlias, EntityType

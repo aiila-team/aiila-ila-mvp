@@ -54,6 +54,9 @@ from celery.utils.log import get_task_logger
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.services.anomaly_detector import detect_anomaly
+from app.services.source_reliability import score_source_url
+
 from app.tasks.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.models import (
@@ -430,6 +433,27 @@ def _run_pipeline(db: Session, event_id: str, result: EnrichmentResult) -> None:
         _link_entities_to_event(db, resolved_entities, event)
         logger.debug(f"[Stage 6] Linked {len(resolved_entities)} entities to event")
 
+        # ─────────────────────────────────────────────────────────────────────────
+        # STAGE 6.5 — RISK & ANOMALY SCORING (Mythresh's ML Models)
+        # Apply Isolation Forest and Source Reliability Multipliers
+        # ─────────────────────────────────────────────────────────────────────────
+        source_multiplier = score_source_url(
+            getattr(event, "url", ""),
+            getattr(event, "source_type", ""),
+        )
+
+        for entity in resolved_entities:
+            features = {
+                "transaction_count_1h": len(entity.events) if hasattr(entity, "events") else 0,
+            }
+            base_score = detect_anomaly(features) * 10.0
+            final_score = min(base_score * source_multiplier, 10.0)
+            entity.risk_score = final_score
+
+        logger.debug(
+            f"[Stage 6.5] ML Risk Scoring applied with multiplier {source_multiplier}x"
+        )
+
     # ─────────────────────────────────────────────────────────────────────────
     # STAGE 7a — KEYWORD ALERTS
     # If keywords matched, create a KEYWORD_MATCH RiskAlert
@@ -511,35 +535,35 @@ def _resolve_entities(
     Returns the list of resolved (possibly newly created) Entity objects.
     All are db-attached and ready for further operations within this session.
     """
-    resolved: list[Entity] = []
-    seen_entity_ids: set[str] = set()   # dedup within this event
+    extracted_payloads = [
+        {
+            "entity_type":    e.entity_type,
+            "value":          e.value,
+            "confidence":     e.confidence,
+            "source_platform": event.platform or "",
+            "source_event_id": str(event.id),
+        }
+        for e in extracted
+    ]
 
-    for extracted_entity in extracted:
-        try:
-            entity = _resolution_service.resolve(
-                db=db,
-                entity_type=extracted_entity.entity_type,
-                value=extracted_entity.value,
-                confidence=extracted_entity.confidence,
-                source_platform=event.platform or "",
-                source_event_id=str(event.id),
-            )
-            if entity is None:
-                continue
+    try:
+        resolved = _resolution_service.resolve_entities(db, extracted_payloads)
+    except Exception as exc:
+        logger.warning(
+            f"[Stage 5] Batch entity resolution failed for event {event.id}: {exc}"
+        )
+        return []
 
-            entity_id_str = str(entity.id)
-            if entity_id_str not in seen_entity_ids:
-                resolved.append(entity)
-                seen_entity_ids.add(entity_id_str)
+    # Deduplicate entities by id in case multiple extracted entities resolve to same record
+    unique_entities: list[Entity] = []
+    seen_entity_ids: set[str] = set()
+    for entity in resolved:
+        entity_id_str = str(entity.id)
+        if entity_id_str not in seen_entity_ids:
+            unique_entities.append(entity)
+            seen_entity_ids.add(entity_id_str)
 
-        except Exception as exc:
-            logger.warning(
-                f"[Stage 5] Entity resolution failed for "
-                f"{extracted_entity.entity_type}:{extracted_entity.value} → {exc}"
-            )
-            # Continue with remaining entities
-
-    return resolved
+    return unique_entities
 
 
 def _link_entities_to_event(

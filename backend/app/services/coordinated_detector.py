@@ -4,7 +4,7 @@ services/coordinated_detector.py
 Coordinated Inauthentic Behaviour Detector — ILA Day 4
 
 What it does:
-  Scans raw_events ingested within the last 1-hour window, groups them by
+  Scans raw_events created within the last 1-hour window, groups them by
   MinHash similarity (reuses signatures already stored in minhash_signature),
   and flags clusters of 3+ accounts posting near-identical content as
   "Coordinated Inauthentic Behaviour."
@@ -178,7 +178,7 @@ class CoordinatedDetector:
         recent = (
             db.query(RawEvent)
             .filter(
-                RawEvent.ingested_at >= cutoff,
+                RawEvent.created_at >= cutoff,
                 RawEvent.is_duplicate == False,
                 RawEvent.minhash_signature.isnot(None),
                 RawEvent.author_handle.isnot(None),
@@ -239,7 +239,7 @@ class CoordinatedDetector:
 
             events_in_cluster = [event_map[m] for m in members if m in event_map]
             handles = [ev.author_handle for ev in events_in_cluster if ev.author_handle]
-            times   = [ev.ingested_at   for ev in events_in_cluster if ev.ingested_at]
+            times   = [ev.created_at   for ev in events_in_cluster if ev.created_at]
 
             cluster = ContentCluster(
                 cluster_id=_cluster_fingerprint(members),

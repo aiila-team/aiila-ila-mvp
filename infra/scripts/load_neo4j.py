@@ -23,6 +23,7 @@ def load_env_file(env_path: Path) -> None:
 ROOT = Path(__file__).parent.parent
 load_env_file(ROOT / ".env")
 load_env_file(ROOT.parent / ".env")
+load_env_file(ROOT.parent / "backend" / ".env")
 
 # Neo4j connection details (from environment variables)
 NEO4J_URI = os.getenv("NEO4J_URI")

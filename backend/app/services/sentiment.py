@@ -44,7 +44,7 @@ from transformers import (
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-MODEL_NAME: str = os.getenv("SENTIMENT_MODEL", "ai4bharat/indic-bert")
+MODEL_NAME: str = os.getenv("SENTIMENT_MODEL", "cardiffnlp/twitter-roberta-base-sentiment")
 MODEL_CACHE_DIR: str = os.getenv("HF_MODEL_CACHE", "./models")
 
 MAX_TOKEN_LENGTH: int = 512        # IndicBERT max sequence length

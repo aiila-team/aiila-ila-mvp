@@ -37,7 +37,7 @@ from typing import Optional
 from celery.utils.log import get_task_logger
 from sqlalchemy.orm import Session
 
-from app.core.celery_app import celery_app
+from app.tasks.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.models import (
     RawEvent,
