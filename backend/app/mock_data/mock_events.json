@@ -1,0 +1,152 @@
+[
+  {
+    "external_id": "tg_msg_001",
+    "content": "URGENT: SIM swap alert! My phone number was hijacked and all my bank accounts drained. This is a new scam targeting Indian users. Stay vigilant!",
+    "platform": "telegram",
+    "author_handle": "@fraud_victim_123",
+    "published_at": "2024-05-09T10:00:00Z",
+    "url": "https://t.me/fraud_alerts/123",
+    "source_name": "Telegram Fraud Alerts",
+    "content_language": "en"
+  },
+  {
+    "external_id": "upi_fraud_002",
+    "content": "Beware of fake UPI payment requests! Received a message claiming to be from HDFC bank asking for OTP. Lost ₹50,000 to scammers.",
+    "platform": "twitter",
+    "author_handle": "@upi_scam_watch",
+    "published_at": "2024-05-09T11:30:00Z",
+    "url": "https://twitter.com/upi_scam_watch/status/123456789",
+    "source_name": "UPI Scam Watch",
+    "content_language": "en"
+  },
+  {
+    "external_id": "crypto_wallet_003",
+    "content": "Crypto wallet drained via phishing link. Sent 2 ETH to fake address. Please help spread awareness about these malicious sites.",
+    "platform": "telegram",
+    "author_handle": "@crypto_alerts",
+    "published_at": "2024-05-09T12:15:00Z",
+    "url": "https://t.me/crypto_alerts/456",
+    "source_name": "Crypto Security Alerts",
+    "content_language": "en"
+  },
+  {
+    "external_id": "phishing_campaign_004",
+    "content": "Massive phishing campaign targeting Indian banks. Fake emails pretending to be from SBI with links to steal credentials. Report to cybercrime cell.",
+    "platform": "twitter",
+    "author_handle": "@cyber_threat_intel",
+    "published_at": "2024-05-09T13:45:00Z",
+    "url": "https://twitter.com/cyber_threat_intel/status/987654321",
+    "source_name": "Cyber Threat Intelligence",
+    "content_language": "en"
+  },
+  {
+    "external_id": "propaganda_msg_005",
+    "content": "The government is hiding the truth about economic collapse. Join the resistance movement! #TruthRevealed #FightBack",
+    "platform": "telegram",
+    "author_handle": "@truth_seeker_99",
+    "published_at": "2024-05-09T14:20:00Z",
+    "url": "https://t.me/truth_channel/789",
+    "source_name": "Truth Seekers Channel",
+    "content_language": "en"
+  },
+  {
+    "external_id": "coordinated_activity_006",
+    "content": "Multiple accounts posting identical messages about 'corruption in high places'. This looks like coordinated inauthentic behavior. Monitoring closely.",
+    "platform": "twitter",
+    "author_handle": "@social_media_monitor",
+    "published_at": "2024-05-09T15:00:00Z",
+    "url": "https://twitter.com/social_media_monitor/status/112233445",
+    "source_name": "Social Media Monitoring",
+    "content_language": "en"
+  },
+  {
+    "external_id": "telegram_fraud_007",
+    "content": "Scam alert: Fake investment group on Telegram promising 1000% returns. They asked for initial deposit and vanished. Lost ₹2 lakhs.",
+    "platform": "telegram",
+    "author_handle": "@investment_scams",
+    "published_at": "2024-05-09T16:30:00Z",
+    "url": "https://t.me/investment_scams/101",
+    "source_name": "Investment Scam Reports",
+    "content_language": "en"
+  },
+  {
+    "external_id": "sim_swap_warning_008",
+    "content": "Another SIM swap victim here. Criminals called my mobile provider pretending to be me and got my SIM transferred. All 2FA codes now going to their phone.",
+    "platform": "twitter",
+    "author_handle": "@security_expert",
+    "published_at": "2024-05-09T17:15:00Z",
+    "url": "https://twitter.com/security_expert/status/556677889",
+    "source_name": "Security Experts Network",
+    "content_language": "en"
+  },
+  {
+    "external_id": "upi_activity_009",
+    "content": "Suspicious UPI transaction activity detected. Multiple small transfers to unknown accounts. This could be money laundering attempt.",
+    "platform": "telegram",
+    "author_handle": "@financial_monitor",
+    "published_at": "2024-05-09T18:00:00Z",
+    "url": "https://t.me/financial_monitor/202",
+    "source_name": "Financial Transaction Monitor",
+    "content_language": "en"
+  },
+  {
+    "external_id": "crypto_mentions_010",
+    "content": "Bitcoin wallet addresses being shared in suspicious Telegram groups. Potential scam or illicit activity. Tracking these addresses.",
+    "platform": "twitter",
+    "author_handle": "@blockchain_watch",
+    "published_at": "2024-05-09T19:30:00Z",
+    "url": "https://twitter.com/blockchain_watch/status/334455667",
+    "source_name": "Blockchain Watch",
+    "content_language": "en"
+  },
+  {
+    "external_id": "phishing_sites_011",
+    "content": "New phishing sites mimicking popular Indian banks. URLs like hdfc-bank-login.com and sbi-online.net. Stay safe online!",
+    "platform": "telegram",
+    "author_handle": "@phishing_alerts",
+    "published_at": "2024-05-09T20:15:00Z",
+    "url": "https://t.me/phishing_alerts/303",
+    "source_name": "Phishing Alert Network",
+    "content_language": "en"
+  },
+  {
+    "external_id": "propaganda_campaign_012",
+    "content": "The elite are controlling everything. Wake up and see the matrix! Share this message to free your mind. #Awakening #Truth",
+    "platform": "twitter",
+    "author_handle": "@matrix_breaker",
+    "published_at": "2024-05-09T21:00:00Z",
+    "url": "https://twitter.com/matrix_breaker/status/778899001",
+    "source_name": "Truth Matrix",
+    "content_language": "en"
+  },
+  {
+    "external_id": "coordinated_posts_013",
+    "content": "Identical posts appearing across multiple social platforms about 'government corruption'. Timing suggests coordinated campaign.",
+    "platform": "telegram",
+    "author_handle": "@disinfo_tracker",
+    "published_at": "2024-05-09T22:30:00Z",
+    "url": "https://t.me/disinfo_tracker/404",
+    "source_name": "Disinformation Tracker",
+    "content_language": "en"
+  },
+  {
+    "external_id": "fraud_network_014",
+    "content": "Uncovering a network of fraudsters using Telegram bots to scam users. They promise quick loans and disappear with money.",
+    "platform": "twitter",
+    "author_handle": "@fraud_investigator",
+    "published_at": "2024-05-09T23:15:00Z",
+    "url": "https://twitter.com/fraud_investigator/status/223344556",
+    "source_name": "Fraud Investigation Unit",
+    "content_language": "en"
+  },
+  {
+    "external_id": "crypto_scam_015",
+    "content": "Fake crypto exchange site stole my savings. Promising high returns on altcoins. Turned out to be a complete scam.",
+    "platform": "telegram",
+    "author_handle": "@crypto_victims",
+    "published_at": "2024-05-10T00:00:00Z",
+    "url": "https://t.me/crypto_victims/505",
+    "source_name": "Crypto Victims Support",
+    "content_language": "en"
+  }
+]
