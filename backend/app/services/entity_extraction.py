@@ -13,12 +13,13 @@ Output:
   to the `extracted_entities` JSONB column in the `raw_events` table.
 
 Entity types produced here align with the EntityType enum in models/__init__.py:
-  PERSON, PHONE, EMAIL, UPI_ACCOUNT, SOCIAL_HANDLE, TELEGRAM
+    PERSON, PHONE, IP_ADDRESS, EMAIL, UPI_ACCOUNT, SOCIAL_HANDLE, TELEGRAM
 ──────────────────────────────────────────────────────────────────────────────
 """
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from dataclasses import dataclass, asdict, field
 from typing import List, Optional
@@ -83,6 +84,7 @@ class ExtractedEntity:
 # Confidence reflects how structurally certain a regex match is.
 #
 #   PHONE       — Indian mobile numbers (+91 prefix or leading 0/none, 10 digits)
+#   IP_ADDRESS  — IPv4 addresses (public or private, canonical dotted form)
 #   UPI_ACCOUNT — UPI VPA format: localpart@provider  (e.g. 9876543210@paytm)
 #   EMAIL       — Standard RFC-ish email (relaxed for threat text which is often messy)
 #   TELEGRAM    — Telegram handles: @username (3–32 chars, alphanumeric + underscore)
@@ -114,6 +116,14 @@ def _norm_phone(raw: str) -> str:
 def _norm_upi(raw: str) -> str:
     """Lowercase and strip spaces from UPI VPA."""
     return raw.strip().lower()
+
+
+def _norm_ip(raw: str) -> str:
+    """Canonicalize IPv4 addresses to dotted-decimal form."""
+    try:
+        return str(ipaddress.IPv4Address(raw.strip()))
+    except Exception:
+        return raw.strip()
 
 
 def _norm_email(raw: str) -> str:
@@ -148,6 +158,20 @@ _PATTERNS: list[tuple[str, re.Pattern, callable, float]] = [
         ),
         _norm_phone,
         0.95,
+    ),
+
+    # ── IPv4 Addresses ───────────────────────────────────────────────────────
+    # Public or private dotted-quad IPv4 addresses.
+    (
+        "ip_address",
+        re.compile(
+            r"(?<![\d.])"
+            r"(?:25[0-5]|2[0-4]\d|1?\d?\d)"
+            r"(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}"
+            r"(?![\d.])"
+        ),
+        _norm_ip,
+        0.96,
     ),
 
     # ── UPI Virtual Payment Addresses ────────────────────────────────────────
@@ -417,7 +441,7 @@ class EntityExtractionService:
         if not text or not text.strip():
             return []
 
-        # Step 1: Regex-based extraction (phone, UPI, email, handles, IMEI, crypto)
+        # Step 1: Regex-based extraction (phone, IP, UPI, email, handles, IMEI, crypto)
         regex_entities = _extract_by_regex(text)
 
         # Step 2: spaCy NER for person names

@@ -14,6 +14,8 @@ __pycache__/
 *.so
 venv/
 .venv/
+.venv/lib
+.venv/lib/python*/site-packages
 env/
 .pytest_cache/
 *.log

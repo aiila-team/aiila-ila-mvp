@@ -1,6 +1,11 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
+    # Optional direct database URL override
+    DATABASE_URL: str | None = None
+
     # PostgreSQL Configuration
     POSTGRES_HOST: str = "postgres"
     POSTGRES_PORT: int = 5432
@@ -28,3 +33,9 @@ class Settings(BaseSettings):
         env_file = ".env"
 
 settings = Settings()
+
+
+def evidence_dir_path() -> Path:
+    path = Path(__file__).resolve().parents[1] / "data" / "evidence"
+    path.mkdir(parents=True, exist_ok=True)
+    return path

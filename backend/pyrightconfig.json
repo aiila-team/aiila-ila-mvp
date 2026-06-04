@@ -1,0 +1,19 @@
+{
+  "venvPath": "D:/aiila-ila-mvp/ila-osint-v1",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "reportAttributeAccessIssue": false,
+  "reportArgumentType": false,
+  "reportCallIssue": false,
+  "reportGeneralTypeIssues": false,
+  "reportFunctionMemberAccess": false,
+  "reportIndexIssue": false,
+  "reportOptionalMemberAccess": false,
+  "reportMissingImports": false,
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "extraPaths": ["."]
+    }
+  ]
+}

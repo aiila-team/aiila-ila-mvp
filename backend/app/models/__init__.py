@@ -33,6 +33,7 @@ Base = declarative_base()
 class EntityType(str, enum.Enum):
     PERSON        = "person"
     PHONE         = "phone"
+    IP_ADDRESS    = "ip_address"
     EMAIL         = "email"
     UPI_ACCOUNT   = "upi_account"
     SOCIAL_HANDLE = "social_handle"
@@ -44,9 +45,19 @@ class EntityType(str, enum.Enum):
 class AlertStatus(str, enum.Enum):
     NEW           = "new"
     UNDER_REVIEW  = "under_review"
+    INVESTIGATING = "investigating"
     CONFIRMED     = "confirmed"
     DISMISSED     = "dismissed"
     ESCALATED     = "escalated"
+    RESOLVED      = "resolved"
+
+
+class UserRole(str, enum.Enum):
+    ADMIN      = "admin"
+    USER       = "user"
+    ANALYST    = "analyst"
+    SPECIALIST = "specialist"
+    COMMANDER  = "commander"
 
 class AlertType(str, enum.Enum):
     FINANCIAL_FRAUD         = "financial_fraud"
@@ -141,6 +152,14 @@ class Source(Base):
 
     events = relationship("RawEvent", back_populates="source")
 
+    @property
+    def error_message(self):
+        return getattr(self, "_error_message", None)
+
+    @error_message.setter
+    def error_message(self, value):
+        self._error_message = value
+
 
 class Keyword(Base):
     """
@@ -205,6 +224,14 @@ class RawEvent(Base):
         Index("ix_raw_events_is_processed", "is_processed"),
     )
 
+    @property
+    def created_at(self):
+        return self.ingested_at
+
+    @property
+    def timestamp(self):
+        return self.published_at or self.ingested_at
+
 
 class Entity(Base):
     """
@@ -236,7 +263,6 @@ class Entity(Base):
     alerts      = relationship("RiskAlert", back_populates="entity")
 
     __table_args__ = (
-        Index("ix_entities_risk_score", "risk_score"),
         Index("ix_entities_primary_identifier", "primary_identifier"),
     )
 
@@ -317,9 +343,35 @@ class RiskAlert(Base):
                                      foreign_keys=[reviewed_by])
 
     __table_args__ = (
-        Index("ix_risk_alerts_created_at", "created_at"),
         Index("ix_risk_alerts_risk_score_status", "risk_score", "status"),
     )
+
+
+class AlertStatusHistory(Base):
+    __tablename__ = "alert_status_history"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    alert_id = Column(UUID(as_uuid=False), ForeignKey("risk_alerts.id"), nullable=False, index=True)
+    old_status = Column(String(32))
+    new_status = Column(String(32), nullable=False)
+    analyst_id = Column(UUID(as_uuid=False), ForeignKey("users.id"))
+    analyst_note = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Investigation(Base):
+    __tablename__ = "investigations"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    title = Column(String(500), nullable=False)
+    status = Column(String(32), default="open", nullable=False)
+    analyst_id = Column(UUID(as_uuid=False), ForeignKey("users.id"))
+    notes = Column(Text)
+    entity_ids = Column(JSONB, default=list)
+    evidence_package_id = Column(UUID(as_uuid=False), ForeignKey("evidence_packages.id"))
+    metadata_ = Column("metadata", JSONB, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
 class EvidencePackage(Base):

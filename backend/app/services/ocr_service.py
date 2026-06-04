@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Optional
 
 import requests
+import shutil
 from loguru import logger
 
 # ── Configuration ──────────────────────────────────────────────────────────────
@@ -56,8 +57,17 @@ eng+hin+ben+urd covers ~90% of ILA's Indian threat data.
 Add tam/tel for South Indian content.
 """
 
-TESSERACT_CMD: str = os.getenv("TESSERACT_CMD", "tesseract")
-"""Path to tesseract binary. Override if not on PATH."""
+# If a local tessdata directory exists inside the project, configure TESSDATA_PREFIX
+# so Tesseract automatically loads language packs (hin, ben, urd) from it.
+_local_tessdata = Path(__file__).resolve().parent.parent / "tessdata"
+if _local_tessdata.exists():
+    os.environ.setdefault("TESSDATA_PREFIX", str(_local_tessdata))
+
+_env_tess = os.getenv("TESSERACT_CMD")
+# Prefer explicit env var; fall back to which('tesseract') so processes
+# that have Tesseract on PATH but not the env var still work.
+TESSERACT_CMD: str = _env_tess or shutil.which("tesseract") or "tesseract"
+"""Path to tesseract binary. Override with `TESSERACT_CMD` env var if needed."""
 
 DOWNLOAD_TIMEOUT_SEC: int = 15
 """HTTP request timeout for downloading images."""

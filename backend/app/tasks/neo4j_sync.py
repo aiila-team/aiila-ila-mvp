@@ -17,6 +17,7 @@ Node Types (Labels):
   ├─────────────────┼──────────────────────────────────────────────────────┤
   │ Person          │ EntityType.PERSON                                    │
   │ Phone           │ EntityType.PHONE                                     │
+    │ IPAddress       │ EntityType.IP_ADDRESS                                │
   │ SocialAccount   │ EntityType.SOCIAL_HANDLE, EntityType.TELEGRAM        │
   │ UPIAccount      │ EntityType.UPI_ACCOUNT                               │
   │ EmailAddress    │ EntityType.EMAIL                                     │
@@ -28,8 +29,9 @@ Relationships:
   ┌──────────────┬────────────────────────────────────────────────────────┐
   │ Relationship │ Meaning                                                │
   ├──────────────┼────────────────────────────────────────────────────────┤
-  │ OWNS         │ Person owns a Phone / UPIAccount / CryptoWallet / IMEI │
-  │ CONTROLS     │ Person controls a SocialAccount / EmailAddress         │
+    │ OWNS         │ Person owns a Phone / UPIAccount / CryptoWallet / IMEI │
+    │ USES         │ Person uses an IPAddress                                │
+    │ CONTROLS     │ Person controls a SocialAccount / EmailAddress         │
   │ POSTED       │ SocialAccount posted content (event link)              │
   │ KNOWS        │ Person ↔ Person (co-occurrence / communication edge)   │
   └──────────────┴────────────────────────────────────────────────────────┘
@@ -107,6 +109,7 @@ def close_driver() -> None:
 _ENTITY_TYPE_TO_LABEL: dict[str, str] = {
     EntityType.PERSON:        "Person",
     EntityType.PHONE:         "Phone",
+    EntityType.IP_ADDRESS:    "IPAddress",
     EntityType.EMAIL:         "EmailAddress",
     EntityType.UPI_ACCOUNT:   "UPIAccount",
     EntityType.SOCIAL_HANDLE: "SocialAccount",
@@ -118,6 +121,7 @@ _ENTITY_TYPE_TO_LABEL: dict[str, str] = {
 # Relationship type for each alias node type connecting back to a Person node
 _PERSON_TO_ALIAS_RELATIONSHIP: dict[str, str] = {
     "Phone":         "OWNS",
+    "IPAddress":     "USES",
     "UPIAccount":    "OWNS",
     "IMEIDevice":    "OWNS",
     "CryptoWallet":  "OWNS",
@@ -182,6 +186,19 @@ class _Queries:
 
     MERGE_PHONE = """
         MERGE (n:Phone {number: $value})
+        ON CREATE SET
+            n.entity_id  = $entity_id,
+            n.confidence = $confidence,
+            n.platform   = $platform,
+            n.created_at = timestamp()
+        ON MATCH SET
+            n.confidence = $confidence,
+            n.updated_at = timestamp()
+        RETURN n
+    """
+
+    MERGE_IP_ADDRESS = """
+        MERGE (n:IPAddress {address: $value})
         ON CREATE SET
             n.entity_id  = $entity_id,
             n.confidence = $confidence,
@@ -266,6 +283,16 @@ class _Queries:
         MATCH (p:Person {entity_id: $person_entity_id})
         MATCH (ph:Phone {number: $value})
         MERGE (p)-[r:OWNS]->(ph)
+        ON CREATE SET r.since = timestamp(), r.confidence = $confidence
+        ON MATCH  SET r.confidence = $confidence
+        RETURN r
+    """
+
+    # Person -[:USES]-> IPAddress
+    REL_PERSON_USES_IP = """
+        MATCH (p:Person {entity_id: $person_entity_id})
+        MATCH (ip:IPAddress {address: $value})
+        MERGE (p)-[r:USES]->(ip)
         ON CREATE SET r.since = timestamp(), r.confidence = $confidence
         ON MATCH  SET r.confidence = $confidence
         RETURN r
@@ -358,6 +385,9 @@ class _Queries:
 
         CREATE CONSTRAINT phone_number IF NOT EXISTS
             FOR (ph:Phone) REQUIRE ph.number IS UNIQUE;
+
+        CREATE CONSTRAINT ip_address IF NOT EXISTS
+            FOR (ip:IPAddress) REQUIRE ip.address IS UNIQUE;
 
         CREATE CONSTRAINT upi_vpa IF NOT EXISTS
             FOR (u:UPIAccount) REQUIRE u.vpa IS UNIQUE;
@@ -560,6 +590,7 @@ class Neo4jSyncService:
         query_map: dict[str, str] = {
             "Person":       _Queries.MERGE_PERSON,
             "Phone":        _Queries.MERGE_PHONE,
+            "IPAddress":    _Queries.MERGE_IP_ADDRESS,
             "UPIAccount":   _Queries.MERGE_UPI,
             "EmailAddress": _Queries.MERGE_EMAIL,
             "SocialAccount":_Queries.MERGE_SOCIAL,
@@ -609,6 +640,7 @@ class Neo4jSyncService:
 
         query_map: dict[str, str] = {
             "Phone":        _Queries.MERGE_PHONE,
+            "IPAddress":    _Queries.MERGE_IP_ADDRESS,
             "UPIAccount":   _Queries.MERGE_UPI,
             "EmailAddress": _Queries.MERGE_EMAIL,
             "SocialAccount":_Queries.MERGE_SOCIAL,
@@ -653,8 +685,10 @@ class Neo4jSyncService:
         if rel_type is None:
             return
 
-        rel_query_map: dict[tuple[str, str], str] = {
+        # Keys are 3-tuples: (subject_label, relation_type, object_label)
+        rel_query_map: dict[tuple[str, str, str], str] = {
             ("Person", "OWNS",     "Phone"):        _Queries.REL_PERSON_OWNS_PHONE,
+            ("Person", "USES",     "IPAddress"):    _Queries.REL_PERSON_USES_IP,
             ("Person", "OWNS",     "UPIAccount"):   _Queries.REL_PERSON_OWNS_UPI,
             ("Person", "OWNS",     "IMEIDevice"):   _Queries.REL_PERSON_OWNS_IMEI,
             ("Person", "OWNS",     "CryptoWallet"): _Queries.REL_PERSON_OWNS_CRYPTO,

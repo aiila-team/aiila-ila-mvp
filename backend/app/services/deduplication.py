@@ -277,7 +277,11 @@ class DeduplicationService:
 
         # Step 3: Query LSH for approximate nearest neighbours
         try:
-            candidates: list[str] = self._lsh.query(minhash)
+            # datasketch.MinHashLSH.query() returns a list of Hashable items.
+            # Ensure we coerce to `str` here so downstream code and type
+            # annotations remain consistent and Pyright can verify types.
+            raw_candidates = self._lsh.query(minhash)
+            candidates: list[str] = [str(x) for x in raw_candidates]
         except Exception as exc:
             logger.warning(f"LSH query failed for event {event_id}: {exc}")
             candidates = []

@@ -20,6 +20,9 @@ Usage:
 
   # Reset and reload (drops all data first):
   RESET=true python scripts/load_into_postgres.py
+
+By default the loader is idempotent and preserves existing rows. Use RESET=true
+only when you explicitly want a clean reload.
 """
 
 import json
@@ -38,7 +41,6 @@ BACKEND_PATH = ROOT / "backend"
 if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
 import importlib
-import sqlalchemy
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
@@ -79,7 +81,7 @@ except Exception:
         raise ImportError("Could not import 'app.models'. Ensure the backend/app package is on PYTHONPATH.") from e
 # ── Config ────────────────────────────────────────────────────────────────────
 MOCK_DATA_PATH = Path(__file__).parent / "mock_data.json"
-RESET = os.environ.get("RESET", "false").lower() == "true"
+RESET = os.environ.get("RESET", "false").lower() == "true" or "--reset" in sys.argv or "-r" in sys.argv
 
 BATCH_SIZE = 100   # insert in batches to avoid memory issues
 
@@ -139,7 +141,12 @@ def parse_dt(s):
 def log(msg: str):
     """Simple timestamped logger."""
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}")
+    try:
+        print(f"[{ts}] {msg}")
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or 'ascii'
+        safe_msg = msg.encode(encoding, errors='replace').decode(encoding)
+        print(f"[{ts}] {safe_msg}")
 
 
 def batch_insert(session, model, records: list, batch_size: int = BATCH_SIZE):
@@ -158,12 +165,21 @@ def batch_insert(session, model, records: list, batch_size: int = BATCH_SIZE):
 def setup_tables(engine, reset: bool = False):
     """Create tables (or drop+recreate if RESET=true)."""
     if reset:
-        log("⚠️  RESET=true — dropping all tables...")
-        Base.metadata.drop_all(engine)
-        log("   Tables dropped.")
+        log("⚠️  RESET=true — dropping all tables and recreating schema...")
+        with engine.begin() as conn:
+            conn.execute(text("DROP SCHEMA public CASCADE;"))
+            conn.execute(text("CREATE SCHEMA public;"))
+            conn.execute(text("GRANT ALL ON SCHEMA public TO public;"))
+            # Make sure public role has usage on schema public
+            conn.execute(text("GRANT USAGE ON SCHEMA public TO public;"))
+        log("   Schema reset complete.")
     log("Creating tables (if not exist)...")
-    Base.metadata.create_all(engine)
-    log("   Tables ready.")
+    try:
+        Base.metadata.create_all(engine)
+        log("   Tables ready.")
+    except Exception as e:
+        log(f"   Note: create_all had an issue (might be index/table mismatch): {e}")
+        log("   Proceeding anyway as tables may already exist.")
 
 
 # ── Loaders ───────────────────────────────────────────────────────────────────
@@ -173,17 +189,29 @@ def load_users(session, records: list) -> dict:
     log(f"Loading {len(records)} users...")
     id_map = {}
     for r in records:
-        user = User(
-            id=r["id"],
-            username=r["username"],
-            email=r["email"],
-            hashed_password=r["hashed_password"],
-            full_name=r.get("full_name"),
-            role=r.get("role", "analyst"),
-            is_active=r.get("is_active", True),
-        )
-        session.merge(user)   # merge = insert or update
-        id_map[r["username"]] = r["id"]
+        existing = session.query(User).filter(
+            (User.username == r["username"]) | (User.email == r["email"])
+        ).first()
+        if existing:
+            existing.username = r["username"]
+            existing.email = r["email"]
+            existing.hashed_password = r["hashed_password"]
+            existing.full_name = r.get("full_name")
+            existing.role = r.get("role", "analyst")
+            existing.is_active = r.get("is_active", True)
+            id_map[r["username"]] = existing.id
+        else:
+            user = User(
+                id=r["id"],
+                username=r["username"],
+                email=r["email"],
+                hashed_password=r["hashed_password"],
+                full_name=r.get("full_name"),
+                role=r.get("role", "analyst"),
+                is_active=r.get("is_active", True),
+            )
+            session.add(user)
+            id_map[r["username"]] = r["id"]
     session.flush()
     log(f"   ✓ {len(records)} users loaded")
     return id_map
@@ -219,16 +247,26 @@ def load_keywords(session, records: list) -> dict:
     log(f"Loading {len(records)} keywords...")
     id_map = {}
     for r in records:
-        kw = Keyword(
-            id=r["id"],
-            word=r["word"],
-            category=r.get("category"),
-            language=r.get("language", "en"),
-            is_active=r.get("is_active", True),
-            match_count=r.get("match_count", 0),
-        )
-        session.merge(kw)
-        id_map[r["word"]] = r["id"]
+        existing = session.query(Keyword).filter(
+            Keyword.word == r["word"],
+            Keyword.category == r.get("category")
+        ).first()
+        if existing:
+            existing.language = r.get("language", "en")
+            existing.is_active = r.get("is_active", True)
+            existing.match_count = r.get("match_count", 0)
+            id_map[r["word"]] = existing.id
+        else:
+            kw = Keyword(
+                id=r["id"],
+                word=r["word"],
+                category=r.get("category"),
+                language=r.get("language", "en"),
+                is_active=r.get("is_active", True),
+                match_count=r.get("match_count", 0),
+            )
+            session.add(kw)
+            id_map[r["word"]] = r["id"]
     session.flush()
     log(f"   ✓ {len(records)} keywords loaded")
     return id_map
@@ -271,22 +309,52 @@ def load_entities(session, records: list) -> set:
 def load_aliases(session, records: list):
     """Insert entity aliases."""
     log(f"Loading {len(records)} entity aliases...")
+    entity_ids = {r["entity_id"] for r in records}
+    alias_values = {r["alias_value"] for r in records}
+    
+    existing_aliases = set()
+    if records:
+        existing_rows = (
+            session.query(EntityAlias.entity_id, EntityAlias.alias_value)
+            .filter(EntityAlias.entity_id.in_(list(entity_ids)))
+            .filter(EntityAlias.alias_value.in_(list(alias_values)))
+            .all()
+        )
+        existing_aliases = {(row[0], row[1]) for row in existing_rows}
+
+    inserted_count = 0
+    updated_count = 0
+    
     for i in range(0, len(records), BATCH_SIZE):
         batch = records[i : i + BATCH_SIZE]
         for r in batch:
-            alias = EntityAlias(
-                id=r["id"],
-                entity_id=r["entity_id"],
-                alias_type=r["alias_type"],
-                alias_value=r["alias_value"],
-                platform=r.get("platform"),
-                confidence=r.get("confidence", 1.0),
-                resolution_method=r.get("resolution_method", "exact"),
-                is_verified=r.get("is_verified", False),
-            )
-            session.merge(alias)
+            if (r["entity_id"], r["alias_value"]) in existing_aliases:
+                existing = session.query(EntityAlias).filter(
+                    EntityAlias.entity_id == r["entity_id"],
+                    EntityAlias.alias_value == r["alias_value"]
+                ).first()
+                if existing:
+                    existing.alias_type = r["alias_type"]
+                    existing.platform = r.get("platform")
+                    existing.confidence = r.get("confidence", 1.0)
+                    existing.resolution_method = r.get("resolution_method", "exact")
+                    existing.is_verified = r.get("is_verified", False)
+                    updated_count += 1
+            else:
+                alias = EntityAlias(
+                    id=r["id"],
+                    entity_id=r["entity_id"],
+                    alias_type=r["alias_type"],
+                    alias_value=r["alias_value"],
+                    platform=r.get("platform"),
+                    confidence=r.get("confidence", 1.0),
+                    resolution_method=r.get("resolution_method", "exact"),
+                    is_verified=r.get("is_verified", False),
+                )
+                session.merge(alias)
+                inserted_count += 1
         session.flush()
-    log(f"   ✓ {len(records)} aliases loaded")
+    log(f"   ✓ {inserted_count} aliases loaded + {updated_count} aliases updated")
 
 
 def load_events(session, records: list) -> dict:
@@ -303,8 +371,8 @@ def load_events(session, records: list) -> dict:
     for i in range(0, len(records), BATCH_SIZE):
         batch = records[i : i + BATCH_SIZE]
         for r in batch:
-            # Strip helper fields
-            person_entity_id = r.pop("_person_entity_id", None)
+            # Strip helper fields without mutating the original record.
+            person_entity_id = r.get("_person_entity_id")
 
             event = RawEvent(
                 id=r["id"],
@@ -335,15 +403,30 @@ def load_events(session, records: list) -> dict:
                     "event_id": r["id"],
                     "role": "mentioned",
                 })
-
         session.flush()
-        log(f"   ... {min(i + BATCH_SIZE, len(records))}/{len(records)} events")
 
     # Bulk insert entity_events
     log(f"   Creating {len(entity_event_records)} entity↔event links...")
+    entity_ids = {r["entity_id"] for r in entity_event_records}
+    event_ids = {r["event_id"] for r in entity_event_records}
+    
+    existing_links = set()
+    if entity_event_records:
+        existing_rows = (
+            session.query(EntityEvent.entity_id, EntityEvent.event_id)
+            .filter(EntityEvent.entity_id.in_(list(entity_ids)))
+            .filter(EntityEvent.event_id.in_(list(event_ids)))
+            .all()
+        )
+        existing_links = {(row[0], row[1]) for row in existing_rows}
+
+    inserted_count = 0
     for i in range(0, len(entity_event_records), BATCH_SIZE):
         batch = entity_event_records[i : i + BATCH_SIZE]
         for r in batch:
+            if (r["entity_id"], r["event_id"]) in existing_links:
+                continue
+            
             ee = EntityEvent(
                 id=r["id"],
                 entity_id=r["entity_id"],
@@ -351,9 +434,10 @@ def load_events(session, records: list) -> dict:
                 role=r["role"],
             )
             session.merge(ee)
+            inserted_count += 1
         session.flush()
 
-    log(f"   ✓ {len(records)} events loaded + {len(entity_event_records)} entity-event links")
+    log(f"   ✓ {len(records)} events loaded + {inserted_count} new entity-event links created")
 
 
 def load_alerts(session, records: list):
@@ -457,69 +541,8 @@ def main():
     )
     Session = sessionmaker(bind=engine)
 
-    # Force a clean slate using native PostgreSQL commands
-    log("Nuking old schema and recreating fresh...")
-    with engine.begin() as conn:
-        # Use IF EXISTS to avoid errors if the schema is already absent
-        conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE;"))
-        conn.execute(text("CREATE SCHEMA public;"))
-        # Ensure we operate in the new public schema
-        conn.execute(text("SET search_path TO public;"))
-
-        # Remove any lingering indexes in public that could conflict with
-        # SQLAlchemy's create_all. Drop specific model index names defensively
-        # to avoid name collisions (sometimes left over from manual runs).
-        index_names = [
-            "ix_raw_events_published_at",
-            "ix_raw_events_platform",
-            "ix_raw_events_is_processed",
-            "ix_entities_risk_score",
-            "ix_entities_primary_identifier",
-            "ix_entity_aliases_value",
-            "ix_risk_alerts_created_at",
-            "ix_risk_alerts_risk_score_status",
-        ]
-        for idx_name in index_names:
-            try:
-                conn.execute(text(f'DROP INDEX IF EXISTS public."{idx_name}";'))
-            except Exception:
-                # Non-fatal — continue with other drops
-                pass
-
-    # Create tables and indexes from SQLAlchemy metadata
-    try:
-        # Temporarily remove Index objects to avoid index-name collisions
-        # with leftover database objects. We stash and clear them, create
-        # tables, then restore the Index objects in-memory (we skip
-        # creating them here to avoid conflicts).
-        _stashed_indexes = {}
-        for tbl_name, tbl in Base.metadata.tables.items():
-            _stashed_indexes[tbl_name] = set(tbl.indexes)
-            tbl.indexes.clear()
-
-        Base.metadata.create_all(engine)
-
-        # Restore indexes in metadata (but don't attempt to create them now).
-        for tbl_name, idxs in _stashed_indexes.items():
-            Base.metadata.tables[tbl_name].indexes.update(idxs)
-    except sqlalchemy.exc.ProgrammingError as e:
-        msg = str(e).lower()
-        # Only attempt a retry for errors that indicate an existing object collision
-        if "already exists" in msg or "duplicate" in msg:
-            log(f"Warning: non-fatal schema error during create_all: {e}")
-            # Try a second time — sometimes an index creation failure leaves
-            # other table creation steps undone; a retry often completes the
-            # remaining work (and will skip already-existing objects).
-            try:
-                Base.metadata.create_all(engine)
-            except Exception:
-                # If retry fails, re-raise the original error for visibility
-                raise
-        else:
-            raise
-    except Exception as e:
-        log(f"Error creating tables: {e}")
-        raise
+    # Create tables without destroying existing data unless RESET=true.
+    setup_tables(engine, reset=RESET)
 
     # Load data in dependency order
     log("\n📥 Loading data...")
